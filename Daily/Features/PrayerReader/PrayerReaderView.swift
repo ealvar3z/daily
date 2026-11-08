@@ -5,7 +5,7 @@ struct PrayerReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("morning.readingPosition") private var savedPosition = 0.0
+    @AppStorage private var savedPosition: Double
     @AppStorage("readingSpeed") private var savedSpeed = 1.0
     @AppStorage("englishFirst") private var englishFirst = false
     @State private var playback: ReadingPlayback
@@ -13,11 +13,18 @@ struct PrayerReaderView: View {
 
     init(session: PrayerSession) {
         self.session = session
+        _savedPosition = AppStorage(wrappedValue: 0.0,
+                                    session.readingPositionKey)
         _playback = State(initialValue: ReadingPlayback(
             durations: session.passages.map(\.readingDuration)))
     }
 
     private var currentID: String { session.passages[playback.index].id }
+    private var currentProgress: String? {
+        session.prayers.first { prayer in
+            prayer.passages.contains { $0.id == currentID }
+        }?.progress
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -132,6 +139,9 @@ struct PrayerReaderView: View {
 
     private func controls(toggle: @escaping () -> Void) -> some View {
         VStack(spacing: 8) {
+            if let currentProgress {
+                Text(currentProgress).font(.caption)
+            }
             Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
                 .font(.caption)
             HStack {

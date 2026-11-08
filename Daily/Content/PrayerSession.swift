@@ -6,6 +6,7 @@ struct PrayerSession: Decodable {
         let title: String
         let englishTitle: String
         let passages: [Passage]
+        let progress: String?
     }
 
     struct Passage: Decodable, Identifiable {
@@ -26,6 +27,7 @@ struct PrayerSession: Decodable {
     let prayers: [Prayer]
 
     var passages: [Passage] { prayers.flatMap(\.passages) }
+    var readingPositionKey: String { "\(id).readingPosition" }
 
     static func morning(bundle: Bundle = .main) throws -> PrayerSession {
         guard let url = bundle.url(forResource: "morning",

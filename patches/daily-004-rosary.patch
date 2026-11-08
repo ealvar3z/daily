@@ -1,0 +1,852 @@
+diff --git a/Daily/Content/PrayerSession.swift b/Daily/Content/PrayerSession.swift
+index 0a50d22..8da6a9b 100644
+--- a/Daily/Content/PrayerSession.swift
++++ b/Daily/Content/PrayerSession.swift
+@@ -6,6 +6,7 @@ struct PrayerSession: Decodable {
+         let title: String
+         let englishTitle: String
+         let passages: [Passage]
++        let progress: String?
+     }
+ 
+     struct Passage: Decodable, Identifiable {
+@@ -26,6 +27,7 @@ struct PrayerSession: Decodable {
+     let prayers: [Prayer]
+ 
+     var passages: [Passage] { prayers.flatMap(\.passages) }
++    var readingPositionKey: String { "\(id).readingPosition" }
+ 
+     static func morning(bundle: Bundle = .main) throws -> PrayerSession {
+         guard let url = bundle.url(forResource: "morning",
+diff --git a/Daily/Content/Rosary.swift b/Daily/Content/Rosary.swift
+new file mode 100644
+index 0000000..f5b4555
+--- /dev/null
++++ b/Daily/Content/Rosary.swift
+@@ -0,0 +1,103 @@
++import Foundation
++
++enum Rosary {
++    enum Mysteries: String, CaseIterable {
++        case joyful, sorrowful, glorious, luminous
++
++        static func today(on date: Date, calendar: Calendar) -> Self {
++            switch calendar.component(.weekday, from: date) {
++            case 2, 7: .joyful
++            case 3, 6: .sorrowful
++            case 5: .luminous
++            default: .glorious
++            }
++        }
++    }
++
++    private struct Catalog: Decodable {
++        let provenance: [String: String]
++        let prayers: [PrayerSession.Prayer]
++        let mysteries: [String: [PrayerSession.Prayer]]
++    }
++
++    static func session(on date: Date = .now,
++                        calendar: Calendar = .current,
++                        bundle: Bundle = .main) throws -> PrayerSession {
++        guard let url = bundle.url(forResource: "rosary",
++                                   withExtension: "json") else {
++            throw PrayerSession.ContentError.missing
++        }
++        let catalog = try JSONDecoder().decode(Catalog.self,
++                                              from: Data(contentsOf: url))
++        let kind = Mysteries.today(on: date, calendar: calendar)
++        guard Set(catalog.prayers.map(\.id)).count == catalog.prayers.count,
++              let mysteries = catalog.mysteries[kind.rawValue],
++              mysteries.count == 5 else {
++            throw PrayerSession.ContentError.invalid
++        }
++        let templates = Dictionary(uniqueKeysWithValues:
++            catalog.prayers.map { ($0.id, $0) })
++        var prayers: [PrayerSession.Prayer] = []
++
++        func occurrence(_ template: PrayerSession.Prayer, id: String,
++                        progress: String? = nil) -> PrayerSession.Prayer {
++            PrayerSession.Prayer(
++                id: id, title: template.title,
++                englishTitle: template.englishTitle,
++                passages: template.passages.enumerated().map { index, passage in
++                    PrayerSession.Passage(id: "\(id)-\(index + 1)",
++                                          latin: passage.latin,
++                                          english: passage.english)
++                }, progress: progress)
++        }
++
++        func append(_ templateID: String, _ occurrenceID: String,
++                    progress: String? = nil) throws {
++            guard let template = templates[templateID] else {
++                throw PrayerSession.ContentError.invalid
++            }
++            prayers.append(occurrence(template, id: occurrenceID,
++                                      progress: progress))
++        }
++
++        try append("cross", "opening-cross")
++        try append("creed", "creed")
++        try append("our-father", "opening-our-father")
++        for bead in 1...3 {
++            try append("hail-mary", "opening-hail-mary-\(bead)",
++                       progress: "opening · bead \(bead)/3")
++        }
++        try append("glory-be", "opening-glory-be")
++        for (index, mystery) in mysteries.enumerated() {
++            let decade = index + 1
++            let prefix = "decade-\(decade)"
++            let progress = "\(kind.rawValue) · decade \(decade)/5"
++            prayers.append(occurrence(mystery, id: "\(prefix)-mystery",
++                                      progress: progress))
++            try append("our-father", "\(prefix)-our-father", progress: progress)
++            for bead in 1...10 {
++                try append("hail-mary", "\(prefix)-hail-mary-\(bead)",
++                           progress: "\(progress) · bead \(bead)/10")
++            }
++            try append("glory-be", "\(prefix)-glory-be", progress: progress)
++            try append("fatima", "\(prefix)-fatima", progress: progress)
++        }
++        try append("salve", "closing-salve")
++        try append("versicle", "closing-versicle")
++        try append("collect", "closing-collect")
++        try append("cross", "closing-cross")
++        let day = calendar.dateComponents([.era, .year, .month, .day], from: date)
++        let dayID = "\(day.era ?? 1)-\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
++        let session = PrayerSession(
++            id: "rosary-\(dayID)-\(kind.rawValue)",
++            title: "rosary · \(kind.rawValue)",
++            provenance: catalog.provenance, prayers: prayers)
++        guard prayers.allSatisfy({ !$0.passages.isEmpty }),
++              session.passages.allSatisfy({
++                  !$0.latin.isEmpty && !$0.english.isEmpty
++              }),
++              Set(session.passages.map(\.id)).count == session.passages.count
++        else { throw PrayerSession.ContentError.invalid }
++        return session
++    }
++}
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -11,3 +11,3 @@
+-                Text("rosary")
++                SessionPrayerButton(kind: .rosary)
+                 Text("evening")
+             }
+
+diff --git a/Daily/Features/PrayerReader/MorningPrayerButton.swift b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+index c99ab93..e5c55ec 100644
+--- a/Daily/Features/PrayerReader/MorningPrayerButton.swift
++++ b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+@@ -1,19 +1,29 @@
+ import SwiftUI
+ 
+ struct MorningPrayerButton: View {
++    var body: some View { SessionPrayerButton(kind: .morning) }
++}
++
++enum PrayerSessionKind: String {
++    case morning, rosary
++}
++
++struct SessionPrayerButton: View {
++    let kind: PrayerSessionKind
+     @State private var isPresented = false
+ 
+     var body: some View {
+-        Button("morning") { isPresented = true }
++        Button(kind.rawValue) { isPresented = true }
+             .buttonStyle(.plain)
+             .frame(minHeight: 44, alignment: .leading)
+             .fullScreenCover(isPresented: $isPresented) {
+-                MorningPrayerScreen()
++                SessionPrayerScreen(kind: kind)
+             }
+     }
+ }
+ 
+-private struct MorningPrayerScreen: View {
++private struct SessionPrayerScreen: View {
++    let kind: PrayerSessionKind
+     @Environment(\.dismiss) private var dismiss
+     @State private var session: PrayerSession?
+     @State private var failed = false
+@@ -24,7 +34,7 @@ private struct MorningPrayerScreen: View {
+                 PrayerReaderView(session: session)
+             } else if failed {
+                 VStack(spacing: 24) {
+-                    Text("Morning prayers could not be opened.")
++                    Text("Prayers could not be opened.")
+                     Button("back") { dismiss() }
+                         .frame(minHeight: 44)
+                 }
+@@ -40,7 +50,12 @@ private struct MorningPrayerScreen: View {
+         .preferredColorScheme(.dark)
+         .task {
+             guard session == nil, !failed else { return }
+-            do { session = try PrayerSession.morning() }
++            do {
++                switch kind {
++                case .morning: session = try PrayerSession.morning()
++                case .rosary: session = try Rosary.session()
++                }
++            }
+             catch { failed = true }
+         }
+     }
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+index bc94513..5b64b23 100644
+--- a/Daily/Features/PrayerReader/PrayerReaderView.swift
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -5,7 +5,7 @@ struct PrayerReaderView: View {
+     @Environment(\.dismiss) private var dismiss
+     @Environment(\.scenePhase) private var scenePhase
+     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+-    @AppStorage("morning.readingPosition") private var savedPosition = 0.0
++    @AppStorage private var savedPosition: Double
+     @AppStorage("readingSpeed") private var savedSpeed = 1.0
+     @AppStorage("englishFirst") private var englishFirst = false
+     @State private var playback: ReadingPlayback
+@@ -13,11 +13,18 @@ struct PrayerReaderView: View {
+ 
+     init(session: PrayerSession) {
+         self.session = session
++        _savedPosition = AppStorage(wrappedValue: 0.0,
++                                    session.readingPositionKey)
+         _playback = State(initialValue: ReadingPlayback(
+             durations: session.passages.map(\.readingDuration)))
+     }
+ 
+     private var currentID: String { session.passages[playback.index].id }
++    private var currentProgress: String? {
++        session.prayers.first { prayer in
++            prayer.passages.contains { $0.id == currentID }
++        }?.progress
++    }
+ 
+     var body: some View {
+         ScrollViewReader { proxy in
+@@ -132,6 +139,9 @@ struct PrayerReaderView: View {
+ 
+     private func controls(toggle: @escaping () -> Void) -> some View {
+         VStack(spacing: 8) {
++            if let currentProgress {
++                Text(currentProgress).font(.caption)
++            }
+             Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
+                 .font(.caption)
+             HStack {
+diff --git a/Daily/Resources/Prayers/rosary.json b/Daily/Resources/Prayers/rosary.json
+new file mode 100644
+index 0000000..ee73b5e
+--- /dev/null
++++ b/Daily/Resources/Prayers/rosary.json
+@@ -0,0 +1,492 @@
++{
++  "provenance": {
++    "latin": "Traditional prayer texts and mystery names checked against the Vatican Compendium; accents, capitalization and punctuation normalized. Fatima prayer uses the common Domine Iesu variant (maxime indigent).",
++    "english": "Traditional English prayer wording; direct project translation for mystery announcements. Not a reproduction of modern Scripture translations.",
++    "sourceURL": "https://www.vatican.va/archive/compendium_ccc/documents/archive_2005_compendium-ccc_en.html",
++    "orderSourceURL": "https://www.usccb.org/how-to-pray-the-rosary",
++    "scheduleSourceURL": "https://www.vatican.va/special/rosary/documents/misteri_en.html",
++    "fatimaSourceURL": "https://www.ewtn.com/catholicism/teachings/prayers-of-the-rosary-in-english-and-latin-164",
++    "practice": "Five decades, Apostles’ Creed opening, customary optional Fatima prayer included after each decade; standard weekly schedule without seasonal Sunday overrides.",
++    "timing": "Estimated silent-reading durations, not recorded audio cues."
++  },
++  "prayers": [
++    {
++      "id": "cross",
++      "title": "Signum Crucis",
++      "englishTitle": "Sign of the Cross",
++      "passages": [
++        {
++          "id": "opening-cross-1",
++          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
++          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
++        }
++      ]
++    },
++    {
++      "id": "our-father",
++      "title": "Pater noster",
++      "englishTitle": "Our Father",
++      "passages": [
++        {
++          "id": "our-father-1",
++          "latin": "Pater noster, qui es in cælis: sanctificétur nomen tuum;",
++          "english": "Our Father, who art in heaven, hallowed be thy name;"
++        },
++        {
++          "id": "our-father-2",
++          "latin": "advéniat regnum tuum; fiat volúntas tua, sicut in cælo, et in terra.",
++          "english": "thy kingdom come; thy will be done on earth as it is in heaven."
++        },
++        {
++          "id": "our-father-3",
++          "latin": "Panem nostrum cotidiánum da nobis hódie,",
++          "english": "Give us this day our daily bread,"
++        },
++        {
++          "id": "our-father-4",
++          "latin": "et dimítte nobis débita nostra, sicut et nos dimíttimus debitóribus nostris.",
++          "english": "and forgive us our trespasses, as we forgive those who trespass against us."
++        },
++        {
++          "id": "our-father-5",
++          "latin": "Et ne nos indúcas in tentatiónem; sed líbera nos a malo. Amen.",
++          "english": "And lead us not into temptation, but deliver us from evil. Amen."
++        }
++      ]
++    },
++    {
++      "id": "hail-mary",
++      "title": "Ave Maria",
++      "englishTitle": "Hail Mary",
++      "passages": [
++        {
++          "id": "hail-mary-1",
++          "latin": "Ave, María, grátia plena, Dóminus tecum.",
++          "english": "Hail Mary, full of grace, the Lord is with thee."
++        },
++        {
++          "id": "hail-mary-2",
++          "latin": "Benedícta tu in muliéribus, et benedíctus fructus ventris tui, Iesus.",
++          "english": "Blessed art thou among women, and blessed is the fruit of thy womb, Jesus."
++        },
++        {
++          "id": "hail-mary-3",
++          "latin": "Sancta María, Mater Dei, ora pro nobis peccatóribus, nunc et in hora mortis nostræ. Amen.",
++          "english": "Holy Mary, Mother of God, pray for us sinners, now and at the hour of our death. Amen."
++        }
++      ]
++    },
++    {
++      "id": "glory-be",
++      "title": "Gloria Patri",
++      "englishTitle": "Glory Be",
++      "passages": [
++        {
++          "id": "glory-be-1",
++          "latin": "Glória Patri, et Fílio, et Spirítui Sancto.",
++          "english": "Glory be to the Father, and to the Son, and to the Holy Spirit."
++        },
++        {
++          "id": "glory-be-2",
++          "latin": "Sicut erat in princípio, et nunc et semper, et in sæcula sæculórum. Amen.",
++          "english": "As it was in the beginning, is now, and ever shall be, world without end. Amen."
++        }
++      ]
++    },
++    {
++      "id": "creed",
++      "title": "Symbolum Apostolorum",
++      "englishTitle": "Apostles’ Creed",
++      "passages": [
++        {
++          "id": "creed-1",
++          "latin": "Credo in Deum, Patrem omnipoténtem, Creatórem cæli et terræ.",
++          "english": "I believe in God, the Father almighty, Creator of heaven and earth."
++        },
++        {
++          "id": "creed-2",
++          "latin": "Et in Iesum Christum, Fílium eius únicum, Dóminum nostrum,",
++          "english": "And in Jesus Christ, his only Son, our Lord,"
++        },
++        {
++          "id": "creed-3",
++          "latin": "qui concéptus est de Spíritu Sancto, natus ex María Vírgine,",
++          "english": "who was conceived by the Holy Spirit, born of the Virgin Mary,"
++        },
++        {
++          "id": "creed-4",
++          "latin": "passus sub Póntio Piláto, crucifíxus, mórtuus et sepúltus;",
++          "english": "suffered under Pontius Pilate, was crucified, died, and was buried;"
++        },
++        {
++          "id": "creed-5",
++          "latin": "descéndit ad ínferos; tértia die resurréxit a mórtuis;",
++          "english": "he descended into hell; on the third day he rose again from the dead;"
++        },
++        {
++          "id": "creed-6",
++          "latin": "ascéndit ad cælos, sedet ad déxteram Dei Patris omnipoténtis;",
++          "english": "he ascended into heaven and sits at the right hand of God the Father almighty;"
++        },
++        {
++          "id": "creed-7",
++          "latin": "inde ventúrus est iudicáre vivos et mórtuos.",
++          "english": "from there he will come to judge the living and the dead."
++        },
++        {
++          "id": "creed-8",
++          "latin": "Credo in Spíritum Sanctum, sanctam Ecclésiam cathólicam, sanctórum communiónem,",
++          "english": "I believe in the Holy Spirit, the holy Catholic Church, the communion of saints,"
++        },
++        {
++          "id": "creed-9",
++          "latin": "remissiónem peccatórum, carnis resurrectiónem, vitam ætérnam. Amen.",
++          "english": "the forgiveness of sins, the resurrection of the body, and life everlasting. Amen."
++        }
++      ]
++    },
++    {
++      "id": "fatima",
++      "title": "Oratio Fatimæ",
++      "englishTitle": "Fatima Prayer",
++      "passages": [
++        {
++          "id": "fatima-1",
++          "latin": "Dómine Iesu, dimítte nobis débita nostra, salva nos ab igne inférni,",
++          "english": "O my Jesus, forgive us our sins, save us from the fires of hell,"
++        },
++        {
++          "id": "fatima-2",
++          "latin": "perduc in cælum omnes ánimas, præsértim eas quæ misericórdiæ tuæ máxime índigent. Amen.",
++          "english": "lead all souls to heaven, especially those most in need of thy mercy. Amen."
++        }
++      ]
++    },
++    {
++      "id": "salve",
++      "title": "Salve Regina",
++      "englishTitle": "Hail, Holy Queen",
++      "passages": [
++        {
++          "id": "salve-1",
++          "latin": "Salve, Regína, mater misericórdiæ; vita, dulcédo et spes nostra, salve.",
++          "english": "Hail, holy Queen, Mother of mercy; hail, our life, our sweetness, and our hope."
++        },
++        {
++          "id": "salve-2",
++          "latin": "Ad te clamámus, éxsules fílii Hevæ.",
++          "english": "To thee do we cry, poor banished children of Eve."
++        },
++        {
++          "id": "salve-3",
++          "latin": "Ad te suspirámus, geméntes et flentes in hac lacrimárum valle.",
++          "english": "To thee do we send up our sighs, mourning and weeping in this valley of tears."
++        },
++        {
++          "id": "salve-4",
++          "latin": "Eia ergo, advocáta nostra, illos tuos misericórdes óculos ad nos convérte.",
++          "english": "Turn then, most gracious advocate, thine eyes of mercy toward us."
++        },
++        {
++          "id": "salve-5",
++          "latin": "Et Iesum, benedíctum fructum ventris tui, nobis post hoc exsílium osténde.",
++          "english": "And after this our exile, show unto us the blessed fruit of thy womb, Jesus."
++        },
++        {
++          "id": "salve-6",
++          "latin": "O clemens, o pia, o dulcis Virgo María.",
++          "english": "O clement, O loving, O sweet Virgin Mary."
++        }
++      ]
++    },
++    {
++      "id": "versicle",
++      "title": "Ora pro nobis",
++      "englishTitle": "Pray for Us",
++      "passages": [
++        {
++          "id": "versicle-1",
++          "latin": "Ora pro nobis, sancta Dei Génetrix.",
++          "english": "Pray for us, O holy Mother of God."
++        },
++        {
++          "id": "versicle-2",
++          "latin": "Ut digni efficiámur promissiónibus Christi.",
++          "english": "That we may be made worthy of the promises of Christ."
++        }
++      ]
++    },
++    {
++      "id": "collect",
++      "title": "Oremus",
++      "englishTitle": "Let Us Pray",
++      "passages": [
++        {
++          "id": "collect-1",
++          "latin": "Orémus. Deus, cuius Unigénitus per vitam, mortem et resurrectiónem suam nobis salútis ætérnæ præmia comparávit,",
++          "english": "Let us pray. O God, whose only-begotten Son, by his life, death, and resurrection, has purchased for us the rewards of eternal life,"
++        },
++        {
++          "id": "collect-2",
++          "latin": "concéde, quæsumus: ut hæc mystéria sacratíssimo beátæ Maríæ Vírginis Rosário recoléntes,",
++          "english": "grant, we beseech thee, that while meditating upon these mysteries of the most holy Rosary of the Blessed Virgin Mary,"
++        },
++        {
++          "id": "collect-3",
++          "latin": "et imitémur quod cóntinent, et quod promíttunt assequámur. Per Christum Dóminum nostrum. Amen.",
++          "english": "we may imitate what they contain and obtain what they promise. Through Christ our Lord. Amen."
++        }
++      ]
++    }
++  ],
++  "mysteries": {
++    "joyful": [
++      {
++        "id": "joyful-1",
++        "title": "Mystéria gaudiósa · 1/5",
++        "englishTitle": "Joyful Mysteries · 1/5",
++        "passages": [
++          {
++            "id": "joyful-1-announcement",
++            "latin": "Annuntiátio.",
++            "english": "The Annunciation."
++          }
++        ]
++      },
++      {
++        "id": "joyful-2",
++        "title": "Mystéria gaudiósa · 2/5",
++        "englishTitle": "Joyful Mysteries · 2/5",
++        "passages": [
++          {
++            "id": "joyful-2-announcement",
++            "latin": "Visitátio.",
++            "english": "The Visitation."
++          }
++        ]
++      },
++      {
++        "id": "joyful-3",
++        "title": "Mystéria gaudiósa · 3/5",
++        "englishTitle": "Joyful Mysteries · 3/5",
++        "passages": [
++          {
++            "id": "joyful-3-announcement",
++            "latin": "Natívitas.",
++            "english": "The Nativity."
++          }
++        ]
++      },
++      {
++        "id": "joyful-4",
++        "title": "Mystéria gaudiósa · 4/5",
++        "englishTitle": "Joyful Mysteries · 4/5",
++        "passages": [
++          {
++            "id": "joyful-4-announcement",
++            "latin": "Præsentátio.",
++            "english": "The Presentation in the Temple."
++          }
++        ]
++      },
++      {
++        "id": "joyful-5",
++        "title": "Mystéria gaudiósa · 5/5",
++        "englishTitle": "Joyful Mysteries · 5/5",
++        "passages": [
++          {
++            "id": "joyful-5-announcement",
++            "latin": "Invéntio in Templo.",
++            "english": "The Finding in the Temple."
++          }
++        ]
++      }
++    ],
++    "sorrowful": [
++      {
++        "id": "sorrowful-1",
++        "title": "Mystéria dolorósa · 1/5",
++        "englishTitle": "Sorrowful Mysteries · 1/5",
++        "passages": [
++          {
++            "id": "sorrowful-1-announcement",
++            "latin": "Agonía in Hortu.",
++            "english": "The Agony in the Garden."
++          }
++        ]
++      },
++      {
++        "id": "sorrowful-2",
++        "title": "Mystéria dolorósa · 2/5",
++        "englishTitle": "Sorrowful Mysteries · 2/5",
++        "passages": [
++          {
++            "id": "sorrowful-2-announcement",
++            "latin": "Flagellátio.",
++            "english": "The Scourging at the Pillar."
++          }
++        ]
++      },
++      {
++        "id": "sorrowful-3",
++        "title": "Mystéria dolorósa · 3/5",
++        "englishTitle": "Sorrowful Mysteries · 3/5",
++        "passages": [
++          {
++            "id": "sorrowful-3-announcement",
++            "latin": "Coronátio Spinis.",
++            "english": "The Crowning with Thorns."
++          }
++        ]
++      },
++      {
++        "id": "sorrowful-4",
++        "title": "Mystéria dolorósa · 4/5",
++        "englishTitle": "Sorrowful Mysteries · 4/5",
++        "passages": [
++          {
++            "id": "sorrowful-4-announcement",
++            "latin": "Baiulátio Crucis.",
++            "english": "The Carrying of the Cross."
++          }
++        ]
++      },
++      {
++        "id": "sorrowful-5",
++        "title": "Mystéria dolorósa · 5/5",
++        "englishTitle": "Sorrowful Mysteries · 5/5",
++        "passages": [
++          {
++            "id": "sorrowful-5-announcement",
++            "latin": "Crucifíxio et Mors.",
++            "english": "The Crucifixion and Death of Jesus."
++          }
++        ]
++      }
++    ],
++    "glorious": [
++      {
++        "id": "glorious-1",
++        "title": "Mystéria gloriósa · 1/5",
++        "englishTitle": "Glorious Mysteries · 1/5",
++        "passages": [
++          {
++            "id": "glorious-1-announcement",
++            "latin": "Resurréctio.",
++            "english": "The Resurrection."
++          }
++        ]
++      },
++      {
++        "id": "glorious-2",
++        "title": "Mystéria gloriósa · 2/5",
++        "englishTitle": "Glorious Mysteries · 2/5",
++        "passages": [
++          {
++            "id": "glorious-2-announcement",
++            "latin": "Ascénsio.",
++            "english": "The Ascension."
++          }
++        ]
++      },
++      {
++        "id": "glorious-3",
++        "title": "Mystéria gloriósa · 3/5",
++        "englishTitle": "Glorious Mysteries · 3/5",
++        "passages": [
++          {
++            "id": "glorious-3-announcement",
++            "latin": "Descénsus Spíritus Sancti.",
++            "english": "The Descent of the Holy Spirit."
++          }
++        ]
++      },
++      {
++        "id": "glorious-4",
++        "title": "Mystéria gloriósa · 4/5",
++        "englishTitle": "Glorious Mysteries · 4/5",
++        "passages": [
++          {
++            "id": "glorious-4-announcement",
++            "latin": "Assúmptio.",
++            "english": "The Assumption of Mary."
++          }
++        ]
++      },
++      {
++        "id": "glorious-5",
++        "title": "Mystéria gloriósa · 5/5",
++        "englishTitle": "Glorious Mysteries · 5/5",
++        "passages": [
++          {
++            "id": "glorious-5-announcement",
++            "latin": "Coronátio in Cælo.",
++            "english": "The Coronation of Mary in Heaven."
++          }
++        ]
++      }
++    ],
++    "luminous": [
++      {
++        "id": "luminous-1",
++        "title": "Mystéria luminósa · 1/5",
++        "englishTitle": "Luminous Mysteries · 1/5",
++        "passages": [
++          {
++            "id": "luminous-1-announcement",
++            "latin": "Baptísma apud Iordánem.",
++            "english": "The Baptism of Jesus in the Jordan."
++          }
++        ]
++      },
++      {
++        "id": "luminous-2",
++        "title": "Mystéria luminósa · 2/5",
++        "englishTitle": "Luminous Mysteries · 2/5",
++        "passages": [
++          {
++            "id": "luminous-2-announcement",
++            "latin": "Autorevelátio apud Cananénse matrimónium.",
++            "english": "The Self-Revelation of Jesus at the Wedding at Cana."
++          }
++        ]
++      },
++      {
++        "id": "luminous-3",
++        "title": "Mystéria luminósa · 3/5",
++        "englishTitle": "Luminous Mysteries · 3/5",
++        "passages": [
++          {
++            "id": "luminous-3-announcement",
++            "latin": "Regni Dei proclamátio coniúncta cum invitaménto ad conversiónem.",
++            "english": "The Proclamation of the Kingdom of God and the Call to Conversion."
++          }
++        ]
++      },
++      {
++        "id": "luminous-4",
++        "title": "Mystéria luminósa · 4/5",
++        "englishTitle": "Luminous Mysteries · 4/5",
++        "passages": [
++          {
++            "id": "luminous-4-announcement",
++            "latin": "Transfigurátio.",
++            "english": "The Transfiguration."
++          }
++        ]
++      },
++      {
++        "id": "luminous-5",
++        "title": "Mystéria luminósa · 5/5",
++        "englishTitle": "Luminous Mysteries · 5/5",
++        "passages": [
++          {
++            "id": "luminous-5-announcement",
++            "latin": "Eucharístiæ Institútio.",
++            "english": "The Institution of the Eucharist."
++          }
++        ]
++      }
++    ]
++  }
++}
+diff --git a/README.md b/README.md
+index 922c744..b3c23c5 100644
+--- a/README.md
++++ b/README.md
+@@ -3,11 +3,14 @@
+ Daily Catholic prayer in ecclesiastical Latin, with English beneath.
+ Black background. White monospace. Morning, rosary, evening.
+ 
+-Morning: Latin/English reader with adjustable automatic passage scrolling.
++Morning and rosary: Latin/English with adjustable automatic passage scrolling.
+ Tap a passage to select it; scroll to pause; resume to follow again.
+ Tap `latin first` or `english first` to swap languages; the choice is saved.
+ Your place and speed are saved. Reading pauses when the app leaves the screen.
+-Narration, rosary, and evening sessions are next. No audio is bundled yet.
++Rosary selects today's five mysteries using the local date. Each new day has
++its own reading position; the mysteries stay fixed while a session is open.
++Includes the customary Fatima prayer after each decade.
++Narration and evening sessions are next. No audio is bundled yet.
+ 
+ ## Run
+ 
+diff --git a/Tests/RosaryTests.swift b/Tests/RosaryTests.swift
+new file mode 100644
+index 0000000..f689e52
+--- /dev/null
++++ b/Tests/RosaryTests.swift
+@@ -0,0 +1,87 @@
++import XCTest
++@testable import daily
++
++final class RosaryTests: XCTestCase {
++    private func calendar(_ zone: String = "UTC") -> Calendar {
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = TimeZone(identifier: zone)!
++        return calendar
++    }
++
++    private func date(_ value: String) -> Date {
++        ISO8601DateFormatter().date(from: value)!
++    }
++
++    func testAllSevenWeekdays() {
++        let calendar = calendar()
++        let sunday = date("2026-11-08T12:00:00Z")
++        let expected: [Rosary.Mysteries] = [
++            .glorious, .joyful, .sorrowful, .glorious,
++            .luminous, .sorrowful, .joyful
++        ]
++        for (offset, mysteries) in expected.enumerated() {
++            let day = calendar.date(byAdding: .day, value: offset, to: sunday)!
++            XCTAssertEqual(Rosary.Mysteries.today(on: day, calendar: calendar),
++                           mysteries)
++        }
++    }
++
++    func testSelectionUsesLocalDateRatherThanUTC() {
++        let instant = date("2026-11-09T02:00:00Z")
++        XCTAssertEqual(Rosary.Mysteries.today(on: instant,
++                                             calendar: calendar()), .joyful)
++        XCTAssertEqual(Rosary.Mysteries.today(on: instant,
++                       calendar: calendar("America/New_York")), .glorious)
++    }
++
++    func testEachSetContainsCompleteOrderedRosary() throws {
++        for day in [8, 9, 10, 12] {
++            let session = try Rosary.session(
++                on: date("2026-11-\(day < 10 ? "0" : "")\(day)T12:00:00Z"),
++                calendar: calendar())
++            let ids = session.prayers.map(\.id)
++            XCTAssertEqual(ids.count, 81)
++            XCTAssertEqual(Array(ids.prefix(7)), [
++                "opening-cross", "creed", "opening-our-father",
++                "opening-hail-mary-1", "opening-hail-mary-2",
++                "opening-hail-mary-3", "opening-glory-be"
++            ])
++            for decade in 1...5 {
++                let prefix = "decade-\(decade)"
++                let offset = 7 + (decade - 1) * 14
++                let expected = ["\(prefix)-mystery", "\(prefix)-our-father"]
++                    + (1...10).map { "\(prefix)-hail-mary-\($0)" }
++                    + ["\(prefix)-glory-be", "\(prefix)-fatima"]
++                XCTAssertEqual(Array(ids[offset..<(offset + 14)]), expected)
++            }
++            XCTAssertEqual(Array(ids.suffix(4)), [
++                "closing-salve", "closing-versicle", "closing-collect",
++                "closing-cross"
++            ])
++            XCTAssertEqual(ids.filter { $0.contains("hail-mary") }.count, 53)
++            XCTAssertEqual(ids.filter { $0.contains("our-father") }.count, 6)
++            XCTAssertEqual(Set(session.passages.map(\.id)).count,
++                           session.passages.count)
++            XCTAssertTrue(session.passages.allSatisfy {
++                !$0.latin.isEmpty && !$0.english.isEmpty
++            })
++        }
++    }
++
++    func testProgressIsSeparateAndChangesAtLocalMidnight() throws {
++        let local = calendar("America/New_York")
++        let before = try Rosary.session(on: date("2026-11-09T04:59:59Z"),
++                                       calendar: local)
++        let earlier = try Rosary.session(on: date("2026-11-08T12:00:00Z"),
++                                        calendar: local)
++        let after = try Rosary.session(on: date("2026-11-09T05:00:00Z"),
++                                      calendar: local)
++        let morning = try PrayerSession.morning()
++        XCTAssertEqual(morning.readingPositionKey, "morning.readingPosition")
++        XCTAssertNotEqual(before.readingPositionKey, morning.readingPositionKey)
++        XCTAssertEqual(before.readingPositionKey, earlier.readingPositionKey)
++        XCTAssertNotEqual(before.readingPositionKey, after.readingPositionKey)
++        XCTAssertEqual(before.title, "rosary · glorious")
++        XCTAssertEqual(after.title, "rosary · joyful")
++    }
++}
