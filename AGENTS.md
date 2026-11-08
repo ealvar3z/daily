@@ -10,7 +10,8 @@ Build a small, native, offline iPhone prayer app. Read
 - Black background, white monospaced text, square controls, lowercase `daily`.
 - Listen, read silently, or both; one speed setting controls playback and
   automatic scrolling. Preserve pitch and resume position.
-- Bundle reviewed audio and text. No runtime AI, accounts, analytics, or backend.
+- Bundle reviewed audio and text. No runtime AI, accounts, or backend.
+- Do not add analytics.
 - Use the local date for mysteries: Mon/Sat joyful, Tue/Fri sorrowful,
   Wed/Sun glorious, Thu luminous. Freeze selection during a session.
 - Morning: Sign of the Cross; acts of faith, hope, charity; Our Father;
@@ -24,7 +25,7 @@ Build a small, native, offline iPhone prayer app. Read
 ## Engineering
 
 - Use SwiftUI and Apple frameworks. Add dependencies only for a concrete need.
-- Keep views, prayer data, and playback separate. Avoid speculative abstractions.
+- Keep views, prayer data, and playback separate. Avoid needless abstractions.
 - Edit `project.yml`; regenerate the ignored Xcode project with XcodeGen.
 - Keep prose within 80 columns. Keep documentation short and current.
 - Test date selection, sequencing, and playback transitions when implemented.
