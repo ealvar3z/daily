@@ -37,17 +37,17 @@ struct PrayerReaderView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(englishFirst ? prayer.englishTitle :
-                                     prayer.title).font(.title2.bold())
+                                     prayer.title).font(AppFont.heading)
                                 Text(englishFirst ? prayer.title :
-                                     prayer.englishTitle).font(.subheadline)
+                                     prayer.englishTitle).font(AppFont.secondary)
                             }
                             .accessibilityAddTraits(.isHeader)
                             ForEach(prayer.passages) { passage in
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(englishFirst ? passage.english :
-                                         passage.latin).font(.title3)
+                                         passage.latin).font(AppFont.primary)
                                     Text(englishFirst ? passage.latin :
-                                         passage.english).font(.body)
+                                         passage.english).font(AppFont.body)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
@@ -109,7 +109,7 @@ struct PrayerReaderView: View {
                 proxy.scrollTo(currentID, anchor: .top)
             }
         }
-        .fontDesign(.monospaced)
+        .font(AppFont.body)
         .foregroundStyle(.white)
         .background(.black)
         .task(id: playback.isPlaying) {
@@ -145,13 +145,13 @@ struct PrayerReaderView: View {
     private func controls(toggle: @escaping () -> Void) -> some View {
         VStack(spacing: 8) {
             if playback.isWaitingForReflection {
-                Text("take your time · continue when ready").font(.caption)
+                Text("take your time · continue when ready").font(AppFont.caption)
             }
             if let currentProgress {
-                Text(currentProgress).font(.caption)
+                Text(currentProgress).font(AppFont.caption)
             }
             Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
-                .font(.caption)
+                .font(AppFont.caption)
             HStack {
                 Button(playback.isPlaying ? "pause" :
                        playback.isWaitingForReflection ? "continue" :
@@ -181,7 +181,7 @@ struct PrayerReaderView: View {
                 englishFirst.toggle()
             }
             .buttonStyle(.plain)
-            .font(.subheadline)
+            .font(AppFont.secondary)
             .frame(maxWidth: .infinity, minHeight: 44)
             .overlay(Rectangle().stroke(.white))
             .accessibilityLabel("Primary prayer language")

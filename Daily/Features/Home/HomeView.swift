@@ -5,14 +5,14 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 Text("daily prayer")
-                    .font(.system(.largeTitle, design: .monospaced).bold())
+                    .font(AppFont.largeTitle)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .accessibilityAddTraits(.isHeader)
                 MorningPrayerButton()
                 SessionPrayerButton(kind: .rosary)
                 SessionPrayerButton(kind: .evening)
             }
-            .font(.system(.title2, design: .monospaced))
+            .font(AppFont.title)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }

@@ -1,0 +1,486 @@
+diff --git a/Daily/Content/PrayerSession.swift b/Daily/Content/PrayerSession.swift
+index 8da6a9b..5ef1a0f 100644
+--- a/Daily/Content/PrayerSession.swift
++++ b/Daily/Content/PrayerSession.swift
+@@ -13,6 +13,15 @@ struct PrayerSession: Decodable {
+         let id: String
+         let latin: String
+         let english: String
++        let pauseForReflection: Bool?
++
++        init(id: String, latin: String, english: String,
++             pauseForReflection: Bool? = nil) {
++            self.id = id
++            self.latin = latin
++            self.english = english
++            self.pauseForReflection = pauseForReflection
++        }
+ 
+         var readingDuration: Double {
+             let words = max(latin.split(whereSeparator: \.isWhitespace).count,
+@@ -30,7 +39,15 @@ struct PrayerSession: Decodable {
+     var readingPositionKey: String { "\(id).readingPosition" }
+ 
+     static func morning(bundle: Bundle = .main) throws -> PrayerSession {
+-        guard let url = bundle.url(forResource: "morning",
++        try load("morning", bundle: bundle)
++    }
++
++    static func evening(bundle: Bundle = .main) throws -> PrayerSession {
++        try load("evening", bundle: bundle)
++    }
++
++    private static func load(_ name: String, bundle: Bundle) throws -> Self {
++        guard let url = bundle.url(forResource: name,
+                                    withExtension: "json") else {
+             throw ContentError.missing
+         }
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -12,3 +12,3 @@
+-                Text("evening")
++                SessionPrayerButton(kind: .evening)
+             }
+             .font(.system(.title2, design: .monospaced))
+
+diff --git a/Daily/Features/PrayerReader/MorningPrayerButton.swift b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+index e5c55ec..eff3d84 100644
+--- a/Daily/Features/PrayerReader/MorningPrayerButton.swift
++++ b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+@@ -5,7 +5,7 @@ struct MorningPrayerButton: View {
+ }
+ 
+ enum PrayerSessionKind: String {
+-    case morning, rosary
++    case morning, rosary, evening
+ }
+ 
+ struct SessionPrayerButton: View {
+@@ -54,6 +54,7 @@ private struct SessionPrayerScreen: View {
+                 switch kind {
+                 case .morning: session = try PrayerSession.morning()
+                 case .rosary: session = try Rosary.session()
++                case .evening: session = try PrayerSession.evening()
+                 }
+             }
+             catch { failed = true }
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+index 5b64b23..864ae2b 100644
+--- a/Daily/Features/PrayerReader/PrayerReaderView.swift
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -16,7 +16,10 @@ struct PrayerReaderView: View {
+         _savedPosition = AppStorage(wrappedValue: 0.0,
+                                     session.readingPositionKey)
+         _playback = State(initialValue: ReadingPlayback(
+-            durations: session.passages.map(\.readingDuration)))
++            durations: session.passages.map(\.readingDuration),
++            reflectionIndices: Set(session.passages.indices.filter {
++                session.passages[$0].pauseForReflection == true
++            })))
+     }
+ 
+     private var currentID: String { session.passages[playback.index].id }
+@@ -94,7 +97,9 @@ struct PrayerReaderView: View {
+             }
+             .onChange(of: playback.index) { _, _ in
+                 savedPosition = playback.position
+-                if playback.isPlaying { scroll(proxy) }
++                if playback.isPlaying || playback.isWaitingForReflection {
++                    scroll(proxy)
++                }
+             }
+             .onAppear {
+                 guard !restored else { return }
+@@ -139,6 +144,9 @@ struct PrayerReaderView: View {
+ 
+     private func controls(toggle: @escaping () -> Void) -> some View {
+         VStack(spacing: 8) {
++            if playback.isWaitingForReflection {
++                Text("take your time · continue when ready").font(.caption)
++            }
+             if let currentProgress {
+                 Text(currentProgress).font(.caption)
+             }
+@@ -146,6 +154,7 @@ struct PrayerReaderView: View {
+                 .font(.caption)
+             HStack {
+                 Button(playback.isPlaying ? "pause" :
++                       playback.isWaitingForReflection ? "continue" :
+                        playback.isFinished ? "restart" :
+                        playback.position == 0 ? "start" : "resume",
+                        action: toggle)
+diff --git a/Daily/Playback/ReadingPlayback.swift b/Daily/Playback/ReadingPlayback.swift
+index 3512c75..34179d2 100644
+--- a/Daily/Playback/ReadingPlayback.swift
++++ b/Daily/Playback/ReadingPlayback.swift
+@@ -6,14 +6,17 @@ final class ReadingPlayback {
+     static let speeds = [0.75, 1.0, 1.25, 1.5, 2.0]
+     let starts: [Double]
+     let duration: Double
++    let reflectionIndices: Set<Int>
+     private(set) var position: Double = 0
+     private(set) var speed: Double = 1
+     private(set) var isPlaying = false
+     private var anchor: ContinuousClock.Instant?
+ 
+-    init(durations: [Double]) {
++    init(durations: [Double], reflectionIndices: Set<Int> = []) {
+         precondition(!durations.isEmpty)
+         precondition(durations.allSatisfy { $0.isFinite && $0 > 0 })
++        precondition(reflectionIndices.allSatisfy { durations.indices.contains($0) })
++        self.reflectionIndices = reflectionIndices
+         var total = 0.0
+         starts = durations.map { value in
+             defer { total += value }
+@@ -24,10 +27,17 @@ final class ReadingPlayback {
+ 
+     var index: Int { starts.lastIndex(where: { $0 <= position }) ?? 0 }
+     var isFinished: Bool { position >= duration }
++    var isWaitingForReflection: Bool {
++        !isPlaying && !isFinished && reflectionIndices.contains(index)
++    }
+ 
+     func play(now: ContinuousClock.Instant = ContinuousClock().now) {
+         guard !isPlaying else { return }
+         if isFinished { position = 0 }
++        if reflectionIndices.contains(index) {
++            position = index + 1 < starts.count ? starts[index + 1] : duration
++            if isFinished { return }
++        }
+         isPlaying = true
+         anchor = now
+     }
+@@ -49,7 +59,7 @@ final class ReadingPlayback {
+               now: ContinuousClock.Instant = ContinuousClock().now) {
+         guard value.isFinite else { return }
+         position = min(max(0, value), duration)
+-        if isFinished { isPlaying = false }
++        if isFinished || reflectionIndices.contains(index) { isPlaying = false }
+         anchor = isPlaying ? now : nil
+     }
+ 
+@@ -59,7 +69,16 @@ final class ReadingPlayback {
+         let seconds = Double(elapsed.seconds)
+             + Double(elapsed.attoseconds) / 1e18
+         guard seconds >= 0 else { return }
+-        position = min(duration, position + seconds * speed)
++        let next = min(duration, position + seconds * speed)
++        if let stop = reflectionIndices.sorted().first(where: {
++            starts[$0] > position && starts[$0] <= next
++        }) {
++            position = starts[stop]
++            isPlaying = false
++            anchor = nil
++            return
++        }
++        position = next
+         anchor = now
+         if isFinished {
+             isPlaying = false
+diff --git a/Daily/Resources/Prayers/evening.json b/Daily/Resources/Prayers/evening.json
+new file mode 100644
+index 0000000..89a1639
+--- /dev/null
++++ b/Daily/Resources/Prayers/evening.json
+@@ -0,0 +1,203 @@
++{
++  "id": "evening",
++  "title": "evening",
++  "provenance": {
++    "latin": "Traditional prayers, checked against the Vatican Compendium, Appendix A; capitalization and punctuation normalized. Amen completes the Our Father.",
++    "english": "Traditional English for common prayers; direct project translation from Latin for the Act of Contrition. Not a reproduction of the Compendium English translation.",
++    "sourceURL": "https://www.vatican.va/archive/compendium_ccc/documents/archive_2005_compendium-ccc_en.html",
++    "timing": "Estimated silent-reading durations, not recorded audio cues.",
++    "reflection": "The examination prompt is an original bilingual instruction, not a traditional prayer. Automatic reading stops here until Continue is selected.",
++    "practice": "A selected evening devotion, not Compline or the Divine Office."
++  },
++  "prayers": [
++    {
++      "id": "opening-cross",
++      "title": "Signum Crucis",
++      "englishTitle": "Sign of the Cross",
++      "passages": [
++        {
++          "id": "opening-cross-1",
++          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
++          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
++        }
++      ]
++    },
++    {
++      "id": "examination",
++      "title": "Gratiarum actio et examen conscientiæ",
++      "englishTitle": "Thanksgiving and Examination of Conscience",
++      "passages": [
++        {
++          "id": "examination-1",
++          "latin": "In siléntio, Deo grátias age et consciéntiam tuam exámina.",
++          "english": "In silence, give thanks to God and examine your conscience.",
++          "pauseForReflection": true
++        }
++      ]
++    },
++    {
++      "id": "contrition",
++      "title": "Actus contritionis",
++      "englishTitle": "Act of Contrition",
++      "passages": [
++        {
++          "id": "contrition-1",
++          "latin": "Deus meus, ex toto corde pænitet me ómnium meórum peccatórum, éaque detéstor,",
++          "english": "O my God, I am sorry with all my heart for all my sins, and I detest them,"
++        },
++        {
++          "id": "contrition-2",
++          "latin": "quia peccándo, non solum pœnas a te iuste statútas proméritus sum,",
++          "english": "because by sinning I have not only deserved the punishments you have justly established,"
++        },
++        {
++          "id": "contrition-3",
++          "latin": "sed præsértim quia offéndi te, summum bonum, ac dignum qui super ómnia diligáris.",
++          "english": "but above all because I have offended you, the highest good, worthy of being loved above all things."
++        },
++        {
++          "id": "contrition-4",
++          "latin": "Ídeo fírmiter propóno, adiuvánte grátia tua, de cétero me non peccatúrum peccandíque occasiónes próximas fugitúrum. Amen.",
++          "english": "Therefore, with the help of your grace, I firmly resolve to sin no more and to avoid the near occasions of sin. Amen."
++        }
++      ]
++    },
++    {
++      "id": "our-father",
++      "title": "Pater noster",
++      "englishTitle": "Our Father",
++      "passages": [
++        {
++          "id": "our-father-1",
++          "latin": "Pater noster, qui es in cælis: sanctificétur nomen tuum;",
++          "english": "Our Father, who art in heaven, hallowed be thy name;"
++        },
++        {
++          "id": "our-father-2",
++          "latin": "advéniat regnum tuum; fiat volúntas tua, sicut in cælo, et in terra.",
++          "english": "thy kingdom come; thy will be done on earth as it is in heaven."
++        },
++        {
++          "id": "our-father-3",
++          "latin": "Panem nostrum cotidiánum da nobis hódie,",
++          "english": "Give us this day our daily bread,"
++        },
++        {
++          "id": "our-father-4",
++          "latin": "et dimítte nobis débita nostra, sicut et nos dimíttimus debitóribus nostris.",
++          "english": "and forgive us our trespasses, as we forgive those who trespass against us."
++        },
++        {
++          "id": "our-father-5",
++          "latin": "Et ne nos indúcas in tentatiónem; sed líbera nos a malo. Amen.",
++          "english": "And lead us not into temptation, but deliver us from evil. Amen."
++        }
++      ]
++    },
++    {
++      "id": "hail-mary",
++      "title": "Ave Maria",
++      "englishTitle": "Hail Mary",
++      "passages": [
++        {
++          "id": "hail-mary-1",
++          "latin": "Ave, María, grátia plena, Dóminus tecum.",
++          "english": "Hail Mary, full of grace, the Lord is with thee."
++        },
++        {
++          "id": "hail-mary-2",
++          "latin": "Benedícta tu in muliéribus, et benedíctus fructus ventris tui, Iesus.",
++          "english": "Blessed art thou among women, and blessed is the fruit of thy womb, Jesus."
++        },
++        {
++          "id": "hail-mary-3",
++          "latin": "Sancta María, Mater Dei, ora pro nobis peccatóribus, nunc et in hora mortis nostræ. Amen.",
++          "english": "Holy Mary, Mother of God, pray for us sinners, now and at the hour of our death. Amen."
++        }
++      ]
++    },
++    {
++      "id": "glory-be",
++      "title": "Gloria Patri",
++      "englishTitle": "Glory Be",
++      "passages": [
++        {
++          "id": "glory-be-1",
++          "latin": "Glória Patri, et Fílio, et Spirítui Sancto.",
++          "english": "Glory be to the Father, and to the Son, and to the Holy Spirit."
++        },
++        {
++          "id": "glory-be-2",
++          "latin": "Sicut erat in princípio, et nunc et semper, et in sæcula sæculórum. Amen.",
++          "english": "As it was in the beginning, is now, and ever shall be, world without end. Amen."
++        }
++      ]
++    },
++    {
++      "id": "salve",
++      "title": "Salve Regina",
++      "englishTitle": "Hail, Holy Queen",
++      "passages": [
++        {
++          "id": "salve-1",
++          "latin": "Salve, Regína, mater misericórdiæ; vita, dulcédo et spes nostra, salve.",
++          "english": "Hail, holy Queen, Mother of mercy; hail, our life, our sweetness, and our hope."
++        },
++        {
++          "id": "salve-2",
++          "latin": "Ad te clamámus, éxsules fílii Hevæ.",
++          "english": "To thee do we cry, poor banished children of Eve."
++        },
++        {
++          "id": "salve-3",
++          "latin": "Ad te suspirámus, geméntes et flentes in hac lacrimárum valle.",
++          "english": "To thee do we send up our sighs, mourning and weeping in this valley of tears."
++        },
++        {
++          "id": "salve-4",
++          "latin": "Eia ergo, advocáta nostra, illos tuos misericórdes óculos ad nos convérte.",
++          "english": "Turn then, most gracious advocate, thine eyes of mercy toward us."
++        },
++        {
++          "id": "salve-5",
++          "latin": "Et Iesum, benedíctum fructum ventris tui, nobis post hoc exsílium osténde.",
++          "english": "And after this our exile, show unto us the blessed fruit of thy womb, Jesus."
++        },
++        {
++          "id": "salve-6",
++          "latin": "O clemens, o pia, o dulcis Virgo María.",
++          "english": "O clement, O loving, O sweet Virgin Mary."
++        }
++      ]
++    },
++    {
++      "id": "eternal-rest",
++      "title": "Requiem æternam",
++      "englishTitle": "Eternal Rest",
++      "passages": [
++        {
++          "id": "eternal-rest-1",
++          "latin": "Réquiem ætérnam dona eis, Dómine, et lux perpétua lúceat eis.",
++          "english": "Eternal rest grant unto them, O Lord, and let perpetual light shine upon them."
++        },
++        {
++          "id": "eternal-rest-2",
++          "latin": "Requiéscant in pace. Amen.",
++          "english": "May they rest in peace. Amen."
++        }
++      ]
++    },
++    {
++      "id": "closing-cross",
++      "title": "Signum Crucis",
++      "englishTitle": "Sign of the Cross",
++      "passages": [
++        {
++          "id": "closing-cross-1",
++          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
++          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
++        }
++      ]
++    }
++  ]
++}
+diff --git a/README.md b/README.md
+index b3c23c5..2425772 100644
+--- a/README.md
++++ b/README.md
+@@ -3,14 +3,15 @@
+ Daily Catholic prayer in ecclesiastical Latin, with English beneath.
+ Black background. White monospace. Morning, rosary, evening.
+ 
+-Morning and rosary: Latin/English with adjustable automatic passage scrolling.
++Morning, rosary, evening: Latin/English with adjustable passage scrolling.
+ Tap a passage to select it; scroll to pause; resume to follow again.
+ Tap `latin first` or `english first` to swap languages; the choice is saved.
+ Your place and speed are saved. Reading pauses when the app leaves the screen.
+ Rosary selects today's five mysteries using the local date. Each new day has
+ its own reading position; the mysteries stay fixed while a session is open.
+ Includes the customary Fatima prayer after each decade.
+-Narration and evening sessions are next. No audio is bundled yet.
++Evening pauses for thanksgiving and examination; tap `continue` when ready.
++Each session saves its own place. Narration is next; no audio is bundled yet.
+ 
+ ## Run
+ 
+diff --git a/Tests/EveningTests.swift b/Tests/EveningTests.swift
+new file mode 100644
+index 0000000..4c85a54
+--- /dev/null
++++ b/Tests/EveningTests.swift
+@@ -0,0 +1,69 @@
++import XCTest
++@testable import daily
++
++final class EveningTests: XCTestCase {
++    func testEveningOrderAndIndependentBookmark() throws {
++        let session = try PrayerSession.evening()
++        XCTAssertEqual(session.prayers.map(\.id), [
++            "opening-cross", "examination", "contrition", "our-father",
++            "hail-mary", "glory-be", "salve", "eternal-rest", "closing-cross"
++        ])
++        XCTAssertEqual(session.readingPositionKey, "evening.readingPosition")
++        XCTAssertNotEqual(session.readingPositionKey,
++                          try PrayerSession.morning().readingPositionKey)
++        XCTAssertEqual(session.passages.filter {
++            $0.pauseForReflection == true
++        }.map(\.id), ["examination-1"])
++        XCTAssertEqual(Set(session.passages.map(\.id)).count,
++                       session.passages.count)
++        XCTAssertEqual(session.passages.first?.latin,
++                       session.passages.last?.latin)
++    }
++
++    @MainActor
++    func testLateTickAtDoubleSpeedCannotSkipReflection() {
++        let reader = ReadingPlayback(durations: [5, 10, 20],
++                                     reflectionIndices: [1])
++        let start = ContinuousClock().now
++        reader.setSpeed(2, now: start)
++        reader.play(now: start)
++        reader.tick(now: start.advanced(by: .seconds(60)))
++        XCTAssertEqual(reader.position, 5)
++        XCTAssertEqual(reader.index, 1)
++        XCTAssertFalse(reader.isPlaying)
++        XCTAssertTrue(reader.isWaitingForReflection)
++        reader.tick(now: start.advanced(by: .seconds(600)))
++        XCTAssertEqual(reader.position, 5)
++    }
++
++    @MainActor
++    func testContinueStartsNextPrayerWithoutCountingReflectionTime() {
++        let reader = ReadingPlayback(durations: [5, 10, 20],
++                                     reflectionIndices: [1])
++        let start = ContinuousClock().now
++        reader.play(now: start)
++        reader.tick(now: start.advanced(by: .seconds(5)))
++        reader.play(now: start.advanced(by: .seconds(100)))
++        XCTAssertEqual(reader.index, 2)
++        XCTAssertEqual(reader.position, 15)
++        XCTAssertTrue(reader.isPlaying)
++        reader.tick(now: start.advanced(by: .seconds(102)))
++        XCTAssertEqual(reader.position, 17, accuracy: 0.001)
++    }
++
++    @MainActor
++    func testRestoredReflectionWaitsAndRestartStopsAgain() {
++        let reader = ReadingPlayback(durations: [5, 10, 20],
++                                     reflectionIndices: [1])
++        let start = ContinuousClock().now
++        reader.seek(to: 5, now: start)
++        XCTAssertTrue(reader.isWaitingForReflection)
++        reader.setSpeed(2, now: start)
++        XCTAssertTrue(reader.isWaitingForReflection)
++        reader.seek(to: reader.duration, now: start)
++        reader.play(now: start)
++        reader.tick(now: start.advanced(by: .seconds(3)))
++        XCTAssertEqual(reader.position, 5)
++        XCTAssertTrue(reader.isWaitingForReflection)
++    }
++}

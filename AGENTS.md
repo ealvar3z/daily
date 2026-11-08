@@ -7,7 +7,9 @@ Build a small, native, offline iPhone prayer app. Read
 
 - Three sessions: morning, today's rosary, evening.
 - Ecclesiastical Latin first; paired English translation underneath.
-- Black background, white monospaced text, square controls, lowercase `daily`.
+- Black background, white EB Garamond text, square controls, lowercase `daily`.
+- Use `AppFont` for scalable typography. Bundle fonts and their OFL license.
+- Keep the approved monospaced app icon unchanged.
 - Listen, read silently, or both; one speed setting controls playback and
   automatic scrolling. Preserve pitch and resume position.
 - Bundle reviewed audio and text. No runtime AI, accounts, or backend.

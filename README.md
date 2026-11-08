@@ -1,7 +1,8 @@
 # daily
 
 Daily Catholic prayer in ecclesiastical Latin, with English beneath.
-Black background. White monospace. Morning, rosary, evening.
+Black background. White EB Garamond. Morning, rosary, evening.
+Regular and Bold fonts are bundled for offline use under the SIL OFL 1.1.
 
 Morning, rosary, evening: Latin/English with adjustable passage scrolling.
 Tap a passage to select it; scroll to pause; resume to follow again.

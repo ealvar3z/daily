@@ -15,11 +15,13 @@ targets:
       - path: Daily
         excludes:
           - "**/.gitkeep"
+          - Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.example.daily
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Daily/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: daily
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

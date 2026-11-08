@@ -43,7 +43,7 @@ private struct SessionPrayerScreen: View {
                 ProgressView().tint(.white)
             }
         }
-        .font(.system(.body, design: .monospaced))
+        .font(AppFont.body)
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
