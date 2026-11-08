@@ -5,7 +5,7 @@ struct MorningPrayerButton: View {
 }
 
 enum PrayerSessionKind: String {
-    case morning, rosary
+    case morning, rosary, evening
 }
 
 struct SessionPrayerButton: View {
@@ -54,6 +54,7 @@ private struct SessionPrayerScreen: View {
                 switch kind {
                 case .morning: session = try PrayerSession.morning()
                 case .rosary: session = try Rosary.session()
+                case .evening: session = try PrayerSession.evening()
                 }
             }
             catch { failed = true }

@@ -16,7 +16,10 @@ struct PrayerReaderView: View {
         _savedPosition = AppStorage(wrappedValue: 0.0,
                                     session.readingPositionKey)
         _playback = State(initialValue: ReadingPlayback(
-            durations: session.passages.map(\.readingDuration)))
+            durations: session.passages.map(\.readingDuration),
+            reflectionIndices: Set(session.passages.indices.filter {
+                session.passages[$0].pauseForReflection == true
+            })))
     }
 
     private var currentID: String { session.passages[playback.index].id }
@@ -94,7 +97,9 @@ struct PrayerReaderView: View {
             }
             .onChange(of: playback.index) { _, _ in
                 savedPosition = playback.position
-                if playback.isPlaying { scroll(proxy) }
+                if playback.isPlaying || playback.isWaitingForReflection {
+                    scroll(proxy)
+                }
             }
             .onAppear {
                 guard !restored else { return }
@@ -139,6 +144,9 @@ struct PrayerReaderView: View {
 
     private func controls(toggle: @escaping () -> Void) -> some View {
         VStack(spacing: 8) {
+            if playback.isWaitingForReflection {
+                Text("take your time · continue when ready").font(.caption)
+            }
             if let currentProgress {
                 Text(currentProgress).font(.caption)
             }
@@ -146,6 +154,7 @@ struct PrayerReaderView: View {
                 .font(.caption)
             HStack {
                 Button(playback.isPlaying ? "pause" :
+                       playback.isWaitingForReflection ? "continue" :
                        playback.isFinished ? "restart" :
                        playback.position == 0 ? "start" : "resume",
                        action: toggle)

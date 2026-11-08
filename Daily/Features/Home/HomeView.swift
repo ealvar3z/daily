@@ -10,7 +10,7 @@ struct HomeView: View {
                     .accessibilityAddTraits(.isHeader)
                 MorningPrayerButton()
                 SessionPrayerButton(kind: .rosary)
-                Text("evening")
+                SessionPrayerButton(kind: .evening)
             }
             .font(.system(.title2, design: .monospaced))
             .frame(maxWidth: .infinity, alignment: .leading)

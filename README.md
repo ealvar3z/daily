@@ -3,14 +3,15 @@
 Daily Catholic prayer in ecclesiastical Latin, with English beneath.
 Black background. White monospace. Morning, rosary, evening.
 
-Morning and rosary: Latin/English with adjustable automatic passage scrolling.
+Morning, rosary, evening: Latin/English with adjustable passage scrolling.
 Tap a passage to select it; scroll to pause; resume to follow again.
 Tap `latin first` or `english first` to swap languages; the choice is saved.
 Your place and speed are saved. Reading pauses when the app leaves the screen.
 Rosary selects today's five mysteries using the local date. Each new day has
 its own reading position; the mysteries stay fixed while a session is open.
 Includes the customary Fatima prayer after each decade.
-Narration and evening sessions are next. No audio is bundled yet.
+Evening pauses for thanksgiving and examination; tap `continue` when ready.
+Each session saves its own place. Narration is next; no audio is bundled yet.
 
 ## Run
 

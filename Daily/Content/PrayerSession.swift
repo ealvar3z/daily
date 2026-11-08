@@ -13,6 +13,15 @@ struct PrayerSession: Decodable {
         let id: String
         let latin: String
         let english: String
+        let pauseForReflection: Bool?
+
+        init(id: String, latin: String, english: String,
+             pauseForReflection: Bool? = nil) {
+            self.id = id
+            self.latin = latin
+            self.english = english
+            self.pauseForReflection = pauseForReflection
+        }
 
         var readingDuration: Double {
             let words = max(latin.split(whereSeparator: \.isWhitespace).count,
@@ -30,7 +39,15 @@ struct PrayerSession: Decodable {
     var readingPositionKey: String { "\(id).readingPosition" }
 
     static func morning(bundle: Bundle = .main) throws -> PrayerSession {
-        guard let url = bundle.url(forResource: "morning",
+        try load("morning", bundle: bundle)
+    }
+
+    static func evening(bundle: Bundle = .main) throws -> PrayerSession {
+        try load("evening", bundle: bundle)
+    }
+
+    private static func load(_ name: String, bundle: Bundle) throws -> Self {
+        guard let url = bundle.url(forResource: name,
                                    withExtension: "json") else {
             throw ContentError.missing
         }

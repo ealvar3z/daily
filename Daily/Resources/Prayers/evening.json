@@ -1,0 +1,203 @@
+{
+  "id": "evening",
+  "title": "evening",
+  "provenance": {
+    "latin": "Traditional prayers, checked against the Vatican Compendium, Appendix A; capitalization and punctuation normalized. Amen completes the Our Father.",
+    "english": "Traditional English for common prayers; direct project translation from Latin for the Act of Contrition. Not a reproduction of the Compendium English translation.",
+    "sourceURL": "https://www.vatican.va/archive/compendium_ccc/documents/archive_2005_compendium-ccc_en.html",
+    "timing": "Estimated silent-reading durations, not recorded audio cues.",
+    "reflection": "The examination prompt is an original bilingual instruction, not a traditional prayer. Automatic reading stops here until Continue is selected.",
+    "practice": "A selected evening devotion, not Compline or the Divine Office."
+  },
+  "prayers": [
+    {
+      "id": "opening-cross",
+      "title": "Signum Crucis",
+      "englishTitle": "Sign of the Cross",
+      "passages": [
+        {
+          "id": "opening-cross-1",
+          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
+          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
+        }
+      ]
+    },
+    {
+      "id": "examination",
+      "title": "Gratiarum actio et examen conscientiæ",
+      "englishTitle": "Thanksgiving and Examination of Conscience",
+      "passages": [
+        {
+          "id": "examination-1",
+          "latin": "In siléntio, Deo grátias age et consciéntiam tuam exámina.",
+          "english": "In silence, give thanks to God and examine your conscience.",
+          "pauseForReflection": true
+        }
+      ]
+    },
+    {
+      "id": "contrition",
+      "title": "Actus contritionis",
+      "englishTitle": "Act of Contrition",
+      "passages": [
+        {
+          "id": "contrition-1",
+          "latin": "Deus meus, ex toto corde pænitet me ómnium meórum peccatórum, éaque detéstor,",
+          "english": "O my God, I am sorry with all my heart for all my sins, and I detest them,"
+        },
+        {
+          "id": "contrition-2",
+          "latin": "quia peccándo, non solum pœnas a te iuste statútas proméritus sum,",
+          "english": "because by sinning I have not only deserved the punishments you have justly established,"
+        },
+        {
+          "id": "contrition-3",
+          "latin": "sed præsértim quia offéndi te, summum bonum, ac dignum qui super ómnia diligáris.",
+          "english": "but above all because I have offended you, the highest good, worthy of being loved above all things."
+        },
+        {
+          "id": "contrition-4",
+          "latin": "Ídeo fírmiter propóno, adiuvánte grátia tua, de cétero me non peccatúrum peccandíque occasiónes próximas fugitúrum. Amen.",
+          "english": "Therefore, with the help of your grace, I firmly resolve to sin no more and to avoid the near occasions of sin. Amen."
+        }
+      ]
+    },
+    {
+      "id": "our-father",
+      "title": "Pater noster",
+      "englishTitle": "Our Father",
+      "passages": [
+        {
+          "id": "our-father-1",
+          "latin": "Pater noster, qui es in cælis: sanctificétur nomen tuum;",
+          "english": "Our Father, who art in heaven, hallowed be thy name;"
+        },
+        {
+          "id": "our-father-2",
+          "latin": "advéniat regnum tuum; fiat volúntas tua, sicut in cælo, et in terra.",
+          "english": "thy kingdom come; thy will be done on earth as it is in heaven."
+        },
+        {
+          "id": "our-father-3",
+          "latin": "Panem nostrum cotidiánum da nobis hódie,",
+          "english": "Give us this day our daily bread,"
+        },
+        {
+          "id": "our-father-4",
+          "latin": "et dimítte nobis débita nostra, sicut et nos dimíttimus debitóribus nostris.",
+          "english": "and forgive us our trespasses, as we forgive those who trespass against us."
+        },
+        {
+          "id": "our-father-5",
+          "latin": "Et ne nos indúcas in tentatiónem; sed líbera nos a malo. Amen.",
+          "english": "And lead us not into temptation, but deliver us from evil. Amen."
+        }
+      ]
+    },
+    {
+      "id": "hail-mary",
+      "title": "Ave Maria",
+      "englishTitle": "Hail Mary",
+      "passages": [
+        {
+          "id": "hail-mary-1",
+          "latin": "Ave, María, grátia plena, Dóminus tecum.",
+          "english": "Hail Mary, full of grace, the Lord is with thee."
+        },
+        {
+          "id": "hail-mary-2",
+          "latin": "Benedícta tu in muliéribus, et benedíctus fructus ventris tui, Iesus.",
+          "english": "Blessed art thou among women, and blessed is the fruit of thy womb, Jesus."
+        },
+        {
+          "id": "hail-mary-3",
+          "latin": "Sancta María, Mater Dei, ora pro nobis peccatóribus, nunc et in hora mortis nostræ. Amen.",
+          "english": "Holy Mary, Mother of God, pray for us sinners, now and at the hour of our death. Amen."
+        }
+      ]
+    },
+    {
+      "id": "glory-be",
+      "title": "Gloria Patri",
+      "englishTitle": "Glory Be",
+      "passages": [
+        {
+          "id": "glory-be-1",
+          "latin": "Glória Patri, et Fílio, et Spirítui Sancto.",
+          "english": "Glory be to the Father, and to the Son, and to the Holy Spirit."
+        },
+        {
+          "id": "glory-be-2",
+          "latin": "Sicut erat in princípio, et nunc et semper, et in sæcula sæculórum. Amen.",
+          "english": "As it was in the beginning, is now, and ever shall be, world without end. Amen."
+        }
+      ]
+    },
+    {
+      "id": "salve",
+      "title": "Salve Regina",
+      "englishTitle": "Hail, Holy Queen",
+      "passages": [
+        {
+          "id": "salve-1",
+          "latin": "Salve, Regína, mater misericórdiæ; vita, dulcédo et spes nostra, salve.",
+          "english": "Hail, holy Queen, Mother of mercy; hail, our life, our sweetness, and our hope."
+        },
+        {
+          "id": "salve-2",
+          "latin": "Ad te clamámus, éxsules fílii Hevæ.",
+          "english": "To thee do we cry, poor banished children of Eve."
+        },
+        {
+          "id": "salve-3",
+          "latin": "Ad te suspirámus, geméntes et flentes in hac lacrimárum valle.",
+          "english": "To thee do we send up our sighs, mourning and weeping in this valley of tears."
+        },
+        {
+          "id": "salve-4",
+          "latin": "Eia ergo, advocáta nostra, illos tuos misericórdes óculos ad nos convérte.",
+          "english": "Turn then, most gracious advocate, thine eyes of mercy toward us."
+        },
+        {
+          "id": "salve-5",
+          "latin": "Et Iesum, benedíctum fructum ventris tui, nobis post hoc exsílium osténde.",
+          "english": "And after this our exile, show unto us the blessed fruit of thy womb, Jesus."
+        },
+        {
+          "id": "salve-6",
+          "latin": "O clemens, o pia, o dulcis Virgo María.",
+          "english": "O clement, O loving, O sweet Virgin Mary."
+        }
+      ]
+    },
+    {
+      "id": "eternal-rest",
+      "title": "Requiem æternam",
+      "englishTitle": "Eternal Rest",
+      "passages": [
+        {
+          "id": "eternal-rest-1",
+          "latin": "Réquiem ætérnam dona eis, Dómine, et lux perpétua lúceat eis.",
+          "english": "Eternal rest grant unto them, O Lord, and let perpetual light shine upon them."
+        },
+        {
+          "id": "eternal-rest-2",
+          "latin": "Requiéscant in pace. Amen.",
+          "english": "May they rest in peace. Amen."
+        }
+      ]
+    },
+    {
+      "id": "closing-cross",
+      "title": "Signum Crucis",
+      "englishTitle": "Sign of the Cross",
+      "passages": [
+        {
+          "id": "closing-cross-1",
+          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
+          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
+        }
+      ]
+    }
+  ]
+}
