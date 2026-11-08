@@ -13,9 +13,12 @@ struct SessionPrayerButton: View {
     @State private var isPresented = false
 
     var body: some View {
-        Button(kind.rawValue) { isPresented = true }
+        Button { isPresented = true } label: {
+            Text(kind.rawValue)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
             .buttonStyle(.plain)
-            .frame(minHeight: 44, alignment: .leading)
             .fullScreenCover(isPresented: $isPresented) {
                 SessionPrayerScreen(kind: kind)
             }

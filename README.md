@@ -14,6 +14,10 @@ Includes the customary Fatima prayer after each decade.
 Evening pauses for thanksgiving and examination; tap `continue` when ready.
 Each session saves its own place. Narration is next; no audio is bundled yet.
 
+Daily reading shows four references for your physical NRSV with full Apocrypha.
+The original 365-day plan is bundled offline and follows the local date.
+February 29 is for catching up. Sources and review notes are in the plan JSON.
+
 ## Run
 
 On macOS with Xcode and XcodeGen:
