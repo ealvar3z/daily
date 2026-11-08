@@ -4,10 +4,11 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
-                Text("daily")
+                Text("daily prayer")
                     .font(.system(.largeTitle, design: .monospaced).bold())
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .accessibilityAddTraits(.isHeader)
-                Text("morning")
+                MorningPrayerButton()
                 Text("rosary")
                 Text("evening")
             }

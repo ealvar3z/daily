@@ -26,6 +26,19 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
+  DailyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+        excludes:
+          - "**/.gitkeep"
+    dependencies:
+      - target: daily
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.daily.tests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   daily:
     build:
@@ -33,4 +46,8 @@ schemes:
         daily: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - DailyTests
 

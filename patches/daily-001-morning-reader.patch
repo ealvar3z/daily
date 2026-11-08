@@ -1,0 +1,701 @@
+diff --git a/Daily/Content/PrayerSession.swift b/Daily/Content/PrayerSession.swift
+new file mode 100644
+index 0000000..0a50d22
+--- /dev/null
++++ b/Daily/Content/PrayerSession.swift
+@@ -0,0 +1,48 @@
++import Foundation
++
++struct PrayerSession: Decodable {
++    struct Prayer: Decodable, Identifiable {
++        let id: String
++        let title: String
++        let englishTitle: String
++        let passages: [Passage]
++    }
++
++    struct Passage: Decodable, Identifiable {
++        let id: String
++        let latin: String
++        let english: String
++
++        var readingDuration: Double {
++            let words = max(latin.split(whereSeparator: \.isWhitespace).count,
++                            english.split(whereSeparator: \.isWhitespace).count)
++            return max(5, Double(words) * 0.6 + 2)
++        }
++    }
++
++    let id: String
++    let title: String
++    let provenance: [String: String]
++    let prayers: [Prayer]
++
++    var passages: [Passage] { prayers.flatMap(\.passages) }
++
++    static func morning(bundle: Bundle = .main) throws -> PrayerSession {
++        guard let url = bundle.url(forResource: "morning",
++                                   withExtension: "json") else {
++            throw ContentError.missing
++        }
++        let session = try JSONDecoder().decode(Self.self,
++                                              from: Data(contentsOf: url))
++        let passages = session.passages
++        guard !session.prayers.isEmpty, !passages.isEmpty,
++              Set(session.prayers.map(\.id)).count == session.prayers.count,
++              Set(passages.map(\.id)).count == passages.count,
++              session.prayers.allSatisfy({ !$0.passages.isEmpty }),
++              passages.allSatisfy({ !$0.latin.isEmpty && !$0.english.isEmpty })
++        else { throw ContentError.invalid }
++        return session
++    }
++
++    enum ContentError: Error { case missing, invalid }
++}
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -10,3 +10,3 @@
+-                Text("morning")
++                MorningPrayerButton()
+                 Text("rosary")
+                 Text("evening")
+
+diff --git a/Daily/Features/PrayerReader/MorningPrayerButton.swift b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+new file mode 100644
+index 0000000..c99ab93
+--- /dev/null
++++ b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+@@ -0,0 +1,47 @@
++import SwiftUI
++
++struct MorningPrayerButton: View {
++    @State private var isPresented = false
++
++    var body: some View {
++        Button("morning") { isPresented = true }
++            .buttonStyle(.plain)
++            .frame(minHeight: 44, alignment: .leading)
++            .fullScreenCover(isPresented: $isPresented) {
++                MorningPrayerScreen()
++            }
++    }
++}
++
++private struct MorningPrayerScreen: View {
++    @Environment(\.dismiss) private var dismiss
++    @State private var session: PrayerSession?
++    @State private var failed = false
++
++    var body: some View {
++        Group {
++            if let session {
++                PrayerReaderView(session: session)
++            } else if failed {
++                VStack(spacing: 24) {
++                    Text("Morning prayers could not be opened.")
++                    Button("back") { dismiss() }
++                        .frame(minHeight: 44)
++                }
++                .padding()
++            } else {
++                ProgressView().tint(.white)
++            }
++        }
++        .font(.system(.body, design: .monospaced))
++        .foregroundStyle(.white)
++        .frame(maxWidth: .infinity, maxHeight: .infinity)
++        .background(.black)
++        .preferredColorScheme(.dark)
++        .task {
++            guard session == nil, !failed else { return }
++            do { session = try PrayerSession.morning() }
++            catch { failed = true }
++        }
++    }
++}
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+new file mode 100644
+index 0000000..3519b3f
+--- /dev/null
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -0,0 +1,172 @@
++import SwiftUI
++
++struct PrayerReaderView: View {
++    let session: PrayerSession
++    @Environment(\.dismiss) private var dismiss
++    @Environment(\.scenePhase) private var scenePhase
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    @AppStorage("morning.readingPosition") private var savedPosition = 0.0
++    @AppStorage("readingSpeed") private var savedSpeed = 1.0
++    @State private var playback: ReadingPlayback
++    @State private var restored = false
++
++    init(session: PrayerSession) {
++        self.session = session
++        _playback = State(initialValue: ReadingPlayback(
++            durations: session.passages.map(\.readingDuration)))
++    }
++
++    private var currentID: String { session.passages[playback.index].id }
++
++    var body: some View {
++        ScrollViewReader { proxy in
++            ScrollView {
++                VStack(alignment: .leading, spacing: 32) {
++                    ForEach(session.prayers) { prayer in
++                        VStack(alignment: .leading, spacing: 24) {
++                            VStack(alignment: .leading, spacing: 8) {
++                                Text(prayer.title).font(.title2.bold())
++                                Text(prayer.englishTitle).font(.subheadline)
++                            }
++                            .accessibilityAddTraits(.isHeader)
++                            ForEach(prayer.passages) { passage in
++                                VStack(alignment: .leading, spacing: 12) {
++                                    Text(passage.latin).font(.title3)
++                                    Text(passage.english).font(.body)
++                                }
++                                .frame(maxWidth: .infinity, alignment: .leading)
++                                .padding(12)
++                                .overlay(alignment: .leading) {
++                                    if passage.id == currentID {
++                                        Rectangle().frame(width: 2)
++                                            .accessibilityHidden(true)
++                                    }
++                                }
++                                .accessibilityElement(children: .combine)
++                                .id(passage.id)
++                                .onTapGesture {
++                                    guard let index = session.passages
++                                        .firstIndex(where: { $0.id == passage.id })
++                                    else { return }
++                                    playback.pause()
++                                    playback.seek(to: playback.starts[index])
++                                }
++                                .accessibilityAction(named: "Read from here") {
++                                    guard let index = session.passages
++                                        .firstIndex(where: { $0.id == passage.id })
++                                    else { return }
++                                    playback.pause()
++                                    playback.seek(to: playback.starts[index])
++                                }
++                            }
++                        }
++                    }
++                    if playback.isFinished {
++                        Text("amen. session complete.")
++                    }
++                }
++                .padding(24)
++            }
++            .simultaneousGesture(DragGesture().onChanged { _ in
++                playback.pause()
++            })
++            .safeAreaInset(edge: .top, spacing: 0) { header }
++            .safeAreaInset(edge: .bottom, spacing: 0) {
++                controls {
++                    if playback.isPlaying { playback.pause() }
++                    else {
++                        playback.play()
++                        scroll(proxy)
++                    }
++                }
++            }
++            .onChange(of: playback.index) { _, _ in
++                savedPosition = playback.position
++                if playback.isPlaying { scroll(proxy) }
++            }
++            .onAppear {
++                guard !restored else { return }
++                playback.seek(to: savedPosition)
++                playback.setSpeed(savedSpeed)
++                restored = true
++                proxy.scrollTo(currentID, anchor: .top)
++            }
++        }
++        .fontDesign(.monospaced)
++        .foregroundStyle(.white)
++        .background(.black)
++        .task(id: playback.isPlaying) {
++            while playback.isPlaying && !Task.isCancelled {
++                do { try await Task.sleep(for: .milliseconds(100)) }
++                catch { return }
++                playback.tick()
++            }
++        }
++        .onChange(of: scenePhase) { _, phase in
++            if phase != .active { pauseAndSave() }
++        }
++        .onChange(of: playback.isPlaying) { _, playing in
++            if !playing { savedPosition = playback.position }
++        }
++        .onDisappear { pauseAndSave() }
++    }
++
++    private var header: some View {
++        HStack {
++            Button("back") {
++                pauseAndSave()
++                dismiss()
++            }
++            .frame(minHeight: 44)
++            Spacer()
++            Text(session.title).accessibilityAddTraits(.isHeader)
++        }
++        .padding(.horizontal, 24)
++        .background(.black)
++    }
++
++    private func controls(toggle: @escaping () -> Void) -> some View {
++        VStack(spacing: 8) {
++            Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
++                .font(.caption)
++            HStack {
++                Button(playback.isPlaying ? "pause" :
++                       playback.isFinished ? "restart" :
++                       playback.position == 0 ? "start" : "resume",
++                       action: toggle)
++                    .frame(minWidth: 88, minHeight: 44)
++                    .overlay(Rectangle().stroke(.white))
++                Spacer()
++                Menu {
++                    ForEach(ReadingPlayback.speeds, id: \.self) { speed in
++                        Button("\(speed.formatted())×") {
++                            playback.setSpeed(speed)
++                            savedSpeed = speed
++                        }
++                    }
++                } label: {
++                    Text("\(playback.speed.formatted())×")
++                        .frame(minWidth: 64, minHeight: 44)
++                        .overlay(Rectangle().stroke(.white))
++                }
++                .accessibilityLabel("Reading speed")
++                .accessibilityValue("\(playback.speed.formatted()) times")
++            }
++            .buttonStyle(.plain)
++        }
++        .padding(.horizontal, 24)
++        .padding(.vertical, 12)
++        .background(.black)
++    }
++
++    private func scroll(_ proxy: ScrollViewProxy) {
++        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) {
++            proxy.scrollTo(currentID, anchor: .top)
++        }
++    }
++
++    private func pauseAndSave() {
++        playback.pause()
++        savedPosition = playback.position
++    }
++}
+diff --git a/Daily/Playback/ReadingPlayback.swift b/Daily/Playback/ReadingPlayback.swift
+new file mode 100644
+index 0000000..6406479
+--- /dev/null
++++ b/Daily/Playback/ReadingPlayback.swift
+@@ -0,0 +1,69 @@
++import Foundation
++import Observation
++
++@MainActor @Observable
++final class ReadingPlayback {
++    static let speeds = [0.75, 1.0, 1.25, 1.5]
++    let starts: [Double]
++    let duration: Double
++    private(set) var position: Double = 0
++    private(set) var speed: Double = 1
++    private(set) var isPlaying = false
++    private var anchor: ContinuousClock.Instant?
++
++    init(durations: [Double]) {
++        precondition(!durations.isEmpty)
++        precondition(durations.allSatisfy { $0.isFinite && $0 > 0 })
++        var total = 0.0
++        starts = durations.map { value in
++            defer { total += value }
++            return total
++        }
++        duration = total
++    }
++
++    var index: Int { starts.lastIndex(where: { $0 <= position }) ?? 0 }
++    var isFinished: Bool { position >= duration }
++
++    func play(now: ContinuousClock.Instant = ContinuousClock().now) {
++        guard !isPlaying else { return }
++        if isFinished { position = 0 }
++        isPlaying = true
++        anchor = now
++    }
++
++    func pause(now: ContinuousClock.Instant = ContinuousClock().now) {
++        tick(now: now)
++        isPlaying = false
++        anchor = nil
++    }
++
++    func setSpeed(_ value: Double,
++                  now: ContinuousClock.Instant = ContinuousClock().now) {
++        guard Self.speeds.contains(value) else { return }
++        tick(now: now)
++        speed = value
++    }
++
++    func seek(to value: Double,
++              now: ContinuousClock.Instant = ContinuousClock().now) {
++        guard value.isFinite else { return }
++        position = min(max(0, value), duration)
++        if isFinished { isPlaying = false }
++        anchor = isPlaying ? now : nil
++    }
++
++    func tick(now: ContinuousClock.Instant = ContinuousClock().now) {
++        guard isPlaying, let previous = anchor else { return }
++        let elapsed = previous.duration(to: now).components
++        let seconds = Double(elapsed.seconds)
++            + Double(elapsed.attoseconds) / 1e18
++        guard seconds >= 0 else { return }
++        position = min(duration, position + seconds * speed)
++        anchor = now
++        if isFinished {
++            isPlaying = false
++            anchor = nil
++        }
++    }
++}
+diff --git a/Daily/Resources/Prayers/morning.json b/Daily/Resources/Prayers/morning.json
+new file mode 100644
+index 0000000..0ee7c30
+--- /dev/null
++++ b/Daily/Resources/Prayers/morning.json
+@@ -0,0 +1,185 @@
++{
++  "id": "morning",
++  "title": "morning",
++  "provenance": {
++    "latin": "Traditional prayers, checked against the Vatican Compendium, Appendix A; capitalization and punctuation normalized. Amen completes the Our Father.",
++    "english": "Traditional English for the Sign of the Cross, Our Father, Hail Mary and Glory Be; direct project translations from Latin for the acts and Guardian Angel. Not a reproduction of the Compendium English translation.",
++    "sourceURL": "https://www.vatican.va/archive/compendium_ccc/documents/archive_2005_compendium-ccc_en.html",
++    "timing": "Estimated silent-reading durations, not recorded audio cues."
++  },
++  "prayers": [
++    {
++      "id": "opening-cross",
++      "title": "Signum Crucis",
++      "englishTitle": "Sign of the Cross",
++      "passages": [
++        {
++          "id": "opening-cross-1",
++          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
++          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
++        }
++      ]
++    },
++    {
++      "id": "faith",
++      "title": "Actus fidei",
++      "englishTitle": "Act of Faith",
++      "passages": [
++        {
++          "id": "faith-1",
++          "latin": "Dómine Deus, firma fide credo et confíteor ómnia et síngula quæ sancta Ecclésia Cathólica propónit,",
++          "english": "Lord God, with firm faith I believe and profess each and every thing that the holy Catholic Church sets forth,"
++        },
++        {
++          "id": "faith-2",
++          "latin": "quia tu, Deus, ea ómnia revelásti, qui es ætérna véritas et sapiéntia quæ nec fállere nec falli potest.",
++          "english": "because you, O God, have revealed them all: you are eternal truth and wisdom, which can neither deceive nor be deceived."
++        },
++        {
++          "id": "faith-3",
++          "latin": "In hac fide vívere et mori státuo. Amen.",
++          "english": "In this faith I resolve to live and die. Amen."
++        }
++      ]
++    },
++    {
++      "id": "hope",
++      "title": "Actus spei",
++      "englishTitle": "Act of Hope",
++      "passages": [
++        {
++          "id": "hope-1",
++          "latin": "Dómine Deus, spero per grátiam tuam remissiónem ómnium peccatórum, et post hanc vitam ætérnam felicitátem me esse consecutúrum:",
++          "english": "Lord God, I hope through your grace to obtain forgiveness of all my sins and eternal happiness after this life,"
++        },
++        {
++          "id": "hope-2",
++          "latin": "quia tu promisísti, qui es infiníte potens, fidélis, benígnus, et miséricors.",
++          "english": "because you have promised it: you are infinitely powerful, faithful, kind, and merciful."
++        },
++        {
++          "id": "hope-3",
++          "latin": "In hac spe vívere et mori státuo. Amen.",
++          "english": "In this hope I resolve to live and die. Amen."
++        }
++      ]
++    },
++    {
++      "id": "charity",
++      "title": "Actus caritatis",
++      "englishTitle": "Act of Charity",
++      "passages": [
++        {
++          "id": "charity-1",
++          "latin": "Dómine Deus, amo te super ómnia et próximum meum propter te,",
++          "english": "Lord God, I love you above all things and my neighbor for your sake,"
++        },
++        {
++          "id": "charity-2",
++          "latin": "quia tu es summum, infinítum, et perfectíssimum bonum, omni dilectióne dignum.",
++          "english": "because you are the highest, infinite, and most perfect good, worthy of all love."
++        },
++        {
++          "id": "charity-3",
++          "latin": "In hac caritáte vívere et mori státuo. Amen.",
++          "english": "In this love I resolve to live and die. Amen."
++        }
++      ]
++    },
++    {
++      "id": "our-father",
++      "title": "Pater noster",
++      "englishTitle": "Our Father",
++      "passages": [
++        {
++          "id": "our-father-1",
++          "latin": "Pater noster, qui es in cælis: sanctificétur nomen tuum;",
++          "english": "Our Father, who art in heaven, hallowed be thy name;"
++        },
++        {
++          "id": "our-father-2",
++          "latin": "advéniat regnum tuum; fiat volúntas tua, sicut in cælo, et in terra.",
++          "english": "thy kingdom come; thy will be done on earth as it is in heaven."
++        },
++        {
++          "id": "our-father-3",
++          "latin": "Panem nostrum cotidiánum da nobis hódie,",
++          "english": "Give us this day our daily bread,"
++        },
++        {
++          "id": "our-father-4",
++          "latin": "et dimítte nobis débita nostra, sicut et nos dimíttimus debitóribus nostris.",
++          "english": "and forgive us our trespasses, as we forgive those who trespass against us."
++        },
++        {
++          "id": "our-father-5",
++          "latin": "Et ne nos indúcas in tentatiónem; sed líbera nos a malo. Amen.",
++          "english": "And lead us not into temptation, but deliver us from evil. Amen."
++        }
++      ]
++    },
++    {
++      "id": "hail-mary",
++      "title": "Ave Maria",
++      "englishTitle": "Hail Mary",
++      "passages": [
++        {
++          "id": "hail-mary-1",
++          "latin": "Ave, María, grátia plena, Dóminus tecum.",
++          "english": "Hail Mary, full of grace, the Lord is with thee."
++        },
++        {
++          "id": "hail-mary-2",
++          "latin": "Benedícta tu in muliéribus, et benedíctus fructus ventris tui, Iesus.",
++          "english": "Blessed art thou among women, and blessed is the fruit of thy womb, Jesus."
++        },
++        {
++          "id": "hail-mary-3",
++          "latin": "Sancta María, Mater Dei, ora pro nobis peccatóribus, nunc et in hora mortis nostræ. Amen.",
++          "english": "Holy Mary, Mother of God, pray for us sinners, now and at the hour of our death. Amen."
++        }
++      ]
++    },
++    {
++      "id": "glory-be",
++      "title": "Gloria Patri",
++      "englishTitle": "Glory Be",
++      "passages": [
++        {
++          "id": "glory-be-1",
++          "latin": "Glória Patri, et Fílio, et Spirítui Sancto.",
++          "english": "Glory be to the Father, and to the Son, and to the Holy Spirit."
++        },
++        {
++          "id": "glory-be-2",
++          "latin": "Sicut erat in princípio, et nunc et semper, et in sæcula sæculórum. Amen.",
++          "english": "As it was in the beginning, is now, and ever shall be, world without end. Amen."
++        }
++      ]
++    },
++    {
++      "id": "guardian-angel",
++      "title": "Angele Dei",
++      "englishTitle": "Guardian Angel",
++      "passages": [
++        {
++          "id": "guardian-angel-1",
++          "latin": "Ángele Dei, qui custos es mei, me, tibi commíssum pietáte supérna, illúmina, custódi, rege et gubérna. Amen.",
++          "english": "Angel of God, my guardian, enlighten, guard, rule, and guide me, entrusted to you by heavenly goodness. Amen."
++        }
++      ]
++    },
++    {
++      "id": "closing-cross",
++      "title": "Signum Crucis",
++      "englishTitle": "Sign of the Cross",
++      "passages": [
++        {
++          "id": "closing-cross-1",
++          "latin": "In nómine Patris, et Fílii, et Spíritus Sancti. Amen.",
++          "english": "In the name of the Father, and of the Son, and of the Holy Spirit. Amen."
++        }
++      ]
++    }
++  ]
++}
+diff --git a/README.md b/README.md
+index 32380cb..bb96365 100644
+--- a/README.md
++++ b/README.md
+@@ -3,8 +3,10 @@
+ Daily Catholic prayer in ecclesiastical Latin, with English beneath.
+ Black background. White monospace. Morning, rosary, evening.
+ 
+-Planned: offline narration and synchronized scrolling at adjustable speed.
+-Currently: SwiftUI home screen and repository scaffold.
++Morning: Latin/English reader with adjustable automatic passage scrolling.
++Tap a passage to select it; scroll to pause; resume to follow again.
++Your place and speed are saved. Reading pauses when the app leaves the screen.
++Narration, rosary, and evening sessions are next. No audio is bundled yet.
+ 
+ ## Run
+ 
+diff --git a/Tests/ReadingPlaybackTests.swift b/Tests/ReadingPlaybackTests.swift
+new file mode 100644
+index 0000000..6e16b2a
+--- /dev/null
++++ b/Tests/ReadingPlaybackTests.swift
+@@ -0,0 +1,85 @@
++import XCTest
++@testable import daily
++
++final class ReadingPlaybackTests: XCTestCase {
++    @MainActor
++    func testSpeedChangeSettlesElapsedTimeAtPreviousRate() {
++        let reader = ReadingPlayback(durations: [10, 10, 10])
++        let start = ContinuousClock().now
++        reader.play(now: start)
++        reader.setSpeed(1.5, now: start.advanced(by: .seconds(4)))
++        reader.tick(now: start.advanced(by: .seconds(8)))
++        XCTAssertEqual(reader.position, 10, accuracy: 0.001)
++        XCTAssertEqual(reader.index, 1)
++    }
++
++    @MainActor
++    func testPauseExcludesTimeUntilResume() {
++        let reader = ReadingPlayback(durations: [10, 10])
++        let start = ContinuousClock().now
++        reader.play(now: start)
++        reader.pause(now: start.advanced(by: .seconds(3)))
++        reader.tick(now: start.advanced(by: .seconds(50)))
++        XCTAssertEqual(reader.position, 3, accuracy: 0.001)
++        reader.play(now: start.advanced(by: .seconds(60)))
++        reader.tick(now: start.advanced(by: .seconds(62)))
++        XCTAssertEqual(reader.position, 5, accuracy: 0.001)
++    }
++
++    @MainActor
++    func testCompletionClampsAndRestartReturnsToBeginning() {
++        let reader = ReadingPlayback(durations: [5, 7])
++        let start = ContinuousClock().now
++        reader.play(now: start)
++        reader.tick(now: start.advanced(by: .seconds(100)))
++        XCTAssertEqual(reader.position, 12)
++        XCTAssertEqual(reader.index, 1)
++        XCTAssertTrue(reader.isFinished)
++        XCTAssertFalse(reader.isPlaying)
++        reader.play(now: start.advanced(by: .seconds(101)))
++        XCTAssertEqual(reader.position, 0)
++        XCTAssertEqual(reader.index, 0)
++    }
++
++    @MainActor
++    func testSeekingResetsClockAnchorAndRejectsInvalidValues() {
++        let reader = ReadingPlayback(durations: [10, 10, 10])
++        let start = ContinuousClock().now
++        reader.play(now: start)
++        reader.seek(to: 20, now: start.advanced(by: .seconds(5)))
++        reader.tick(now: start.advanced(by: .seconds(6)))
++        XCTAssertEqual(reader.position, 21, accuracy: 0.001)
++        reader.seek(to: .nan)
++        XCTAssertEqual(reader.position, 21, accuracy: 0.001)
++        reader.seek(to: -100)
++        XCTAssertEqual(reader.position, 0)
++        reader.seek(to: 100)
++        XCTAssertEqual(reader.position, 30)
++        XCTAssertFalse(reader.isPlaying)
++    }
++
++    @MainActor
++    func testRestoringPositionDoesNotAutomaticallyStart() {
++        let reader = ReadingPlayback(durations: [10, 10])
++        reader.seek(to: 12)
++        reader.setSpeed(1.25)
++        XCTAssertEqual(reader.position, 12)
++        XCTAssertEqual(reader.index, 1)
++        XCTAssertFalse(reader.isPlaying)
++    }
++
++    func testMorningContentHasCompleteOrderAndDistinctOccurrences() throws {
++        let session = try PrayerSession.morning()
++        XCTAssertEqual(session.prayers.map(\.id), [
++            "opening-cross", "faith", "hope", "charity", "our-father",
++            "hail-mary", "glory-be", "guardian-angel", "closing-cross"
++        ])
++        XCTAssertEqual(session.passages.first?.latin,
++                       session.passages.last?.latin)
++        XCTAssertNotEqual(session.passages.first?.id,
++                          session.passages.last?.id)
++        XCTAssertEqual(Set(session.passages.map(\.id)).count,
++                       session.passages.count)
++        XCTAssertTrue(session.passages.allSatisfy { $0.readingDuration >= 5 })
++    }
++}
+diff --git a/project.yml b/project.yml
+index c73e953..e735c50 100644
+--- a/project.yml
++++ b/project.yml
+@@ -26,6 +26,19 @@ targets:
+         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+         MARKETING_VERSION: "0.1.0"
+         CURRENT_PROJECT_VERSION: "1"
++  DailyTests:
++    type: bundle.unit-test
++    platform: iOS
++    sources:
++      - path: Tests
++        excludes:
++          - "**/.gitkeep"
++    dependencies:
++      - target: daily
++    settings:
++      base:
++        PRODUCT_BUNDLE_IDENTIFIER: org.example.daily.tests
++        GENERATE_INFOPLIST_FILE: YES
+ schemes:
+   daily:
+     build:
+@@ -33,4 +46,8 @@ schemes:
+         daily: all
+     run:
+       config: Debug
++    test:
++      config: Debug
++      targets:
++        - DailyTests
+ 

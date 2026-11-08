@@ -1,0 +1,65 @@
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+index 3519b3f..bc94513 100644
+--- a/Daily/Features/PrayerReader/PrayerReaderView.swift
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -7,6 +7,7 @@ struct PrayerReaderView: View {
+     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+     @AppStorage("morning.readingPosition") private var savedPosition = 0.0
+     @AppStorage("readingSpeed") private var savedSpeed = 1.0
++    @AppStorage("englishFirst") private var englishFirst = false
+     @State private var playback: ReadingPlayback
+     @State private var restored = false
+ 
+@@ -25,14 +26,18 @@ struct PrayerReaderView: View {
+                     ForEach(session.prayers) { prayer in
+                         VStack(alignment: .leading, spacing: 24) {
+                             VStack(alignment: .leading, spacing: 8) {
+-                                Text(prayer.title).font(.title2.bold())
+-                                Text(prayer.englishTitle).font(.subheadline)
++                                Text(englishFirst ? prayer.englishTitle :
++                                     prayer.title).font(.title2.bold())
++                                Text(englishFirst ? prayer.title :
++                                     prayer.englishTitle).font(.subheadline)
+                             }
+                             .accessibilityAddTraits(.isHeader)
+                             ForEach(prayer.passages) { passage in
+                                 VStack(alignment: .leading, spacing: 12) {
+-                                    Text(passage.latin).font(.title3)
+-                                    Text(passage.english).font(.body)
++                                    Text(englishFirst ? passage.english :
++                                         passage.latin).font(.title3)
++                                    Text(englishFirst ? passage.latin :
++                                         passage.english).font(.body)
+                                 }
+                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                 .padding(12)
+@@ -153,6 +158,17 @@ struct PrayerReaderView: View {
+                 .accessibilityValue("\(playback.speed.formatted()) times")
+             }
+             .buttonStyle(.plain)
++            Button(englishFirst ? "english first" : "latin first") {
++                englishFirst.toggle()
++            }
++            .buttonStyle(.plain)
++            .font(.subheadline)
++            .frame(maxWidth: .infinity, minHeight: 44)
++            .overlay(Rectangle().stroke(.white))
++            .accessibilityLabel("Primary prayer language")
++            .accessibilityValue(englishFirst ? "English" : "Latin")
++            .accessibilityHint(englishFirst ? "Switch to Latin first" :
++                               "Switch to English first")
+         }
+         .padding(.horizontal, 24)
+         .padding(.vertical, 12)
+diff --git a/README.md b/README.md
+index bb96365..922c744 100644
+--- a/README.md
++++ b/README.md
+@@ -5,6 +5,7 @@ Black background. White monospace. Morning, rosary, evening.
+ 
+ Morning: Latin/English reader with adjustable automatic passage scrolling.
+ Tap a passage to select it; scroll to pause; resume to follow again.
++Tap `latin first` or `english first` to swap languages; the choice is saved.
+ Your place and speed are saved. Reading pauses when the app leaves the screen.
+ Narration, rosary, and evening sessions are next. No audio is bundled yet.
+ 
