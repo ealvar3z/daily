@@ -15,4 +15,6 @@ enum AppFont {
                                       relativeTo: .subheadline)
     static let caption = Font.custom("EBGaramond-Regular", size: 16,
                                     relativeTo: .caption)
+    static let captionBold = Font.custom("EBGaramond-Bold", size: 16,
+                                        relativeTo: .caption)
 }

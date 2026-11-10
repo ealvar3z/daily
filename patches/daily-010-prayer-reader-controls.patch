@@ -1,0 +1,95 @@
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+--- a/Daily/Features/PrayerReader/PrayerReaderView.swift
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -10,6 +10,7 @@
+     @AppStorage("englishFirst") private var englishFirst = false
+     @State private var playback: ReadingPlayback
+     @State private var restored = false
++    @ScaledMetric(relativeTo: .subheadline) private var controlHeight = 44
+ 
+     init(session: PrayerSession) {
+         self.session = session
+@@ -152,15 +153,29 @@
+             }
+             Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
+                 .font(AppFont.caption)
+-            HStack {
++            HStack(spacing: 8) {
+                 Button(playback.isPlaying ? "pause" :
+                        playback.isWaitingForReflection ? "continue" :
+                        playback.isFinished ? "restart" :
+                        playback.position == 0 ? "start" : "resume",
+                        action: toggle)
+-                    .frame(minWidth: 88, minHeight: 44)
+-                    .overlay(Rectangle().stroke(.white))
+-                Spacer()
++                    .buttonStyle(ReaderControlStyle(height: controlHeight))
++                    .frame(minWidth: 0, maxWidth: .infinity)
++                HStack(spacing: 4) {
++                    Text("LA").accessibilityHidden(true)
++                    Toggle("Primary prayer language", isOn: $englishFirst)
++                        .toggleStyle(.switch)
++                        .labelsHidden()
++                        .tint(.white.opacity(0.35))
++                        .accessibilityLabel("Primary prayer language")
++                        .accessibilityValue(englishFirst ? "English first" :
++                                           "Latin first")
++                        .accessibilityHint("Changes which language appears first")
++                    Text("EN").accessibilityHidden(true)
++                }
++                .font(AppFont.caption)
++                .fixedSize()
++                .frame(minHeight: 44)
+                 Menu {
+                     ForEach(ReadingPlayback.speeds, id: \.self) { speed in
+                         Button("\(speed.formatted())×") {
+@@ -170,24 +185,12 @@
+                     }
+                 } label: {
+                     Text("\(playback.speed.formatted())×")
+-                        .frame(minWidth: 64, minHeight: 44)
+-                        .overlay(Rectangle().stroke(.white))
+-                }
++                }
++                .buttonStyle(ReaderControlStyle(height: controlHeight))
++                .frame(minWidth: 0, maxWidth: .infinity)
+                 .accessibilityLabel("Reading speed")
+                 .accessibilityValue("\(playback.speed.formatted()) times")
+             }
+-            .buttonStyle(.plain)
+-            Button(englishFirst ? "english first" : "latin first") {
+-                englishFirst.toggle()
+-            }
+-            .buttonStyle(.plain)
+-            .font(AppFont.secondary)
+-            .frame(maxWidth: .infinity, minHeight: 44)
+-            .overlay(Rectangle().stroke(.white))
+-            .accessibilityLabel("Primary prayer language")
+-            .accessibilityValue(englishFirst ? "English" : "Latin")
+-            .accessibilityHint(englishFirst ? "Switch to Latin first" :
+-                               "Switch to English first")
+         }
+         .padding(.horizontal, 24)
+         .padding(.vertical, 12)
+@@ -205,3 +208,21 @@
+         savedPosition = playback.position
+     }
+ }
++
++private struct ReaderControlStyle: ButtonStyle {
++    let height: CGFloat
++
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .font(AppFont.secondary)
++            .multilineTextAlignment(.center)
++            .padding(.horizontal, 4)
++            .frame(maxWidth: .infinity, minHeight: height)
++            .contentShape(RoundedRectangle(cornerRadius: 10))
++            .overlay {
++                RoundedRectangle(cornerRadius: 10)
++                    .stroke(.white, lineWidth: 1)
++            }
++            .opacity(configuration.isPressed ? 0.6 : 1)
++    }
++}

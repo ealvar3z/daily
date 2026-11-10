@@ -1,0 +1,87 @@
+diff --git a/Daily/App/AppFont.swift b/Daily/App/AppFont.swift
+--- a/Daily/App/AppFont.swift
++++ b/Daily/App/AppFont.swift
+@@ -15,4 +15,6 @@
+                                       relativeTo: .subheadline)
+     static let caption = Font.custom("EBGaramond-Regular", size: 16,
+                                     relativeTo: .caption)
++    static let captionBold = Font.custom("EBGaramond-Bold", size: 16,
++                                        relativeTo: .caption)
+ }
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -35,7 +35,8 @@
+             Link(destination: URL(string:
+                 "https://jjrgn.substack.com/71f88746")!) {
+                 Text("Support this work")
+-                    .font(AppFont.caption)
++                    .font(AppFont.captionBold)
++                    .foregroundStyle(AppTheme.gold)
+                     .fixedSize(horizontal: false, vertical: true)
+                     .multilineTextAlignment(.center)
+                     .frame(minHeight: 44)
+@@ -54,6 +55,7 @@
+     private func heading(_ title: String) -> some View {
+         Text(title)
+             .font(AppFont.largeTitle)
++            .foregroundStyle(AppTheme.gold)
+             .frame(maxWidth: .infinity, alignment: .center)
+             .accessibilityAddTraits(.isHeader)
+     }
+diff --git a/Daily/Features/PrayerReader/PrayerReaderView.swift b/Daily/Features/PrayerReader/PrayerReaderView.swift
+--- a/Daily/Features/PrayerReader/PrayerReaderView.swift
++++ b/Daily/Features/PrayerReader/PrayerReaderView.swift
+@@ -55,6 +55,7 @@
+                                 .overlay(alignment: .leading) {
+                                     if passage.id == currentID {
+                                         Rectangle().frame(width: 2)
++                                            .foregroundStyle(AppTheme.gold)
+                                             .accessibilityHidden(true)
+                                     }
+                                 }
+@@ -139,6 +140,7 @@
+             Spacer()
+             Text(session.title).accessibilityAddTraits(.isHeader)
+         }
++        .foregroundStyle(AppTheme.gold)
+         .padding(.horizontal, 24)
+         .background(.black)
+     }
+@@ -166,7 +168,7 @@
+                     Toggle("Primary prayer language", isOn: $englishFirst)
+                         .toggleStyle(.switch)
+                         .labelsHidden()
+-                        .tint(.white.opacity(0.35))
++                        .tint(AppTheme.gold)
+                         .accessibilityLabel("Primary prayer language")
+                         .accessibilityValue(englishFirst ? "English first" :
+                                            "Latin first")
+@@ -174,6 +176,7 @@
+                     Text("EN").accessibilityHidden(true)
+                 }
+                 .font(AppFont.caption)
++                .foregroundStyle(AppTheme.gold)
+                 .fixedSize()
+                 .frame(minHeight: 44)
+                 Menu {
+@@ -221,7 +224,7 @@
+             .contentShape(RoundedRectangle(cornerRadius: 10))
+             .overlay {
+                 RoundedRectangle(cornerRadius: 10)
+-                    .stroke(.white, lineWidth: 1)
++                    .stroke(AppTheme.gold, lineWidth: 1)
+             }
+             .opacity(configuration.isPressed ? 0.6 : 1)
+     }
+diff --git a/Daily/App/AppTheme.swift b/Daily/App/AppTheme.swift
+new file mode 100644
+--- /dev/null
++++ b/Daily/App/AppTheme.swift
+@@ -0,0 +1,6 @@
++import SwiftUI
++
++enum AppTheme {
++    static let gold = Color(.sRGB, red: 212.0 / 255,
++                            green: 175.0 / 255, blue: 55.0 / 255, opacity: 1)
++}

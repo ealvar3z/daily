@@ -35,7 +35,8 @@ struct HomeView: View {
             Link(destination: URL(string:
                 "https://jjrgn.substack.com/71f88746")!) {
                 Text("Support this work")
-                    .font(AppFont.caption)
+                    .font(AppFont.captionBold)
+                    .foregroundStyle(AppTheme.gold)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.center)
                     .frame(minHeight: 44)
@@ -54,6 +55,7 @@ struct HomeView: View {
     private func heading(_ title: String) -> some View {
         Text(title)
             .font(AppFont.largeTitle)
+            .foregroundStyle(AppTheme.gold)
             .frame(maxWidth: .infinity, alignment: .center)
             .accessibilityAddTraits(.isHeader)
     }

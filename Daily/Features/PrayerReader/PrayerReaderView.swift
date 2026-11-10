@@ -10,6 +10,7 @@ struct PrayerReaderView: View {
     @AppStorage("englishFirst") private var englishFirst = false
     @State private var playback: ReadingPlayback
     @State private var restored = false
+    @ScaledMetric(relativeTo: .subheadline) private var controlHeight = 44
 
     init(session: PrayerSession) {
         self.session = session
@@ -54,6 +55,7 @@ struct PrayerReaderView: View {
                                 .overlay(alignment: .leading) {
                                     if passage.id == currentID {
                                         Rectangle().frame(width: 2)
+                                            .foregroundStyle(AppTheme.gold)
                                             .accessibilityHidden(true)
                                     }
                                 }
@@ -138,6 +140,7 @@ struct PrayerReaderView: View {
             Spacer()
             Text(session.title).accessibilityAddTraits(.isHeader)
         }
+        .foregroundStyle(AppTheme.gold)
         .padding(.horizontal, 24)
         .background(.black)
     }
@@ -152,15 +155,30 @@ struct PrayerReaderView: View {
             }
             Text("silent reading · \(playback.index + 1)/\(session.passages.count)")
                 .font(AppFont.caption)
-            HStack {
+            HStack(spacing: 8) {
                 Button(playback.isPlaying ? "pause" :
                        playback.isWaitingForReflection ? "continue" :
                        playback.isFinished ? "restart" :
                        playback.position == 0 ? "start" : "resume",
                        action: toggle)
-                    .frame(minWidth: 88, minHeight: 44)
-                    .overlay(Rectangle().stroke(.white))
-                Spacer()
+                    .buttonStyle(ReaderControlStyle(height: controlHeight))
+                    .frame(minWidth: 0, maxWidth: .infinity)
+                HStack(spacing: 4) {
+                    Text("LA").accessibilityHidden(true)
+                    Toggle("Primary prayer language", isOn: $englishFirst)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(AppTheme.gold)
+                        .accessibilityLabel("Primary prayer language")
+                        .accessibilityValue(englishFirst ? "English first" :
+                                           "Latin first")
+                        .accessibilityHint("Changes which language appears first")
+                    Text("EN").accessibilityHidden(true)
+                }
+                .font(AppFont.caption)
+                .foregroundStyle(AppTheme.gold)
+                .fixedSize()
+                .frame(minHeight: 44)
                 Menu {
                     ForEach(ReadingPlayback.speeds, id: \.self) { speed in
                         Button("\(speed.formatted())×") {
@@ -170,24 +188,12 @@ struct PrayerReaderView: View {
                     }
                 } label: {
                     Text("\(playback.speed.formatted())×")
-                        .frame(minWidth: 64, minHeight: 44)
-                        .overlay(Rectangle().stroke(.white))
                 }
+                .buttonStyle(ReaderControlStyle(height: controlHeight))
+                .frame(minWidth: 0, maxWidth: .infinity)
                 .accessibilityLabel("Reading speed")
                 .accessibilityValue("\(playback.speed.formatted()) times")
             }
-            .buttonStyle(.plain)
-            Button(englishFirst ? "english first" : "latin first") {
-                englishFirst.toggle()
-            }
-            .buttonStyle(.plain)
-            .font(AppFont.secondary)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .overlay(Rectangle().stroke(.white))
-            .accessibilityLabel("Primary prayer language")
-            .accessibilityValue(englishFirst ? "English" : "Latin")
-            .accessibilityHint(englishFirst ? "Switch to Latin first" :
-                               "Switch to English first")
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 12)
@@ -203,5 +209,23 @@ struct PrayerReaderView: View {
     private func pauseAndSave() {
         playback.pause()
         savedPosition = playback.position
+    }
+}
+
+private struct ReaderControlStyle: ButtonStyle {
+    let height: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(AppFont.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, minHeight: height)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(AppTheme.gold, lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
