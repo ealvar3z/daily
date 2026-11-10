@@ -50,6 +50,23 @@ struct HomeView: View {
         }
         .foregroundStyle(.white)
         .background(Color.black.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .topTrailing) {
+            NavigationLink {
+                HelpView()
+            } label: {
+                Image(systemName: "book")
+                    .symbolVariant(.none)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 22))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("User Guide")
+            .padding(.trailing, 16)
+        }
     }
 
     private func heading(_ title: String) -> some View {

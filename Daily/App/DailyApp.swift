@@ -4,8 +4,11 @@ import SwiftUI
 struct DailyApp: App {
     var body: some Scene {
         WindowGroup {
-            HomeView()
-                .preferredColorScheme(.dark)
+            NavigationStack {
+                HomeView()
+            }
+            .tint(.white)
+            .preferredColorScheme(.dark)
         }
     }
 }
