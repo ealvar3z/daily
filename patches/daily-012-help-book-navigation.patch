@@ -1,0 +1,67 @@
+diff --git a/Daily/App/DailyApp.swift b/Daily/App/DailyApp.swift
+--- a/Daily/App/DailyApp.swift
++++ b/Daily/App/DailyApp.swift
+@@ -4,8 +4,11 @@
+ struct DailyApp: App {
+     var body: some Scene {
+         WindowGroup {
+-            HomeView()
+-                .preferredColorScheme(.dark)
++            NavigationStack {
++                HomeView()
++            }
++            .tint(.white)
++            .preferredColorScheme(.dark)
+         }
+     }
+ }
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -50,6 +50,22 @@
+         }
+         .foregroundStyle(.white)
+         .background(Color.black.ignoresSafeArea())
++        .navigationBarTitleDisplayMode(.inline)
++        .toolbarBackground(.black, for: .navigationBar)
++        .toolbarBackground(.visible, for: .navigationBar)
++        .toolbar {
++            ToolbarItem(placement: .topBarTrailing) {
++                NavigationLink {
++                    HelpView()
++                } label: {
++                    Image(systemName: "book.closed")
++                        .foregroundStyle(.white)
++                        .frame(minWidth: 44, minHeight: 44)
++                        .contentShape(Rectangle())
++                }
++                .accessibilityLabel("User Guide")
++            }
++        }
+     }
+ 
+     private func heading(_ title: String) -> some View {
+diff --git a/Daily/Features/Help/HelpView.swift b/Daily/Features/Help/HelpView.swift
+new file mode 100644
+--- /dev/null
++++ b/Daily/Features/Help/HelpView.swift
+@@ -0,0 +1,19 @@
++import SwiftUI
++
++struct HelpView: View {
++    var body: some View {
++        ScrollView {
++            Text("guide")
++                .font(AppFont.largeTitle)
++                .foregroundStyle(.white)
++                .frame(maxWidth: .infinity, alignment: .center)
++                .accessibilityAddTraits(.isHeader)
++                .padding(32)
++        }
++        .frame(maxWidth: .infinity, maxHeight: .infinity)
++        .background(Color.black.ignoresSafeArea())
++        .navigationBarTitleDisplayMode(.inline)
++        .toolbarBackground(.black, for: .navigationBar)
++        .toolbarBackground(.visible, for: .navigationBar)
++    }
++}
