@@ -18,13 +18,37 @@ struct HomeView: View {
                     .padding(.bottom, blankLine)
                 DailyReadingView()
                     .padding(.bottom, blankLine)
+                heading("daily mass")
+                    .padding(.bottom, blankLine)
+                Link(destination: URL(string: "https://masstimes.org")!) {
+                    HomeNavigationLabel(title: "Find a Mass near you")
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, blankLine)
             }
             .font(AppFont.title)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Link(destination: URL(string:
+                "https://jjrgn.substack.com/71f88746")!) {
+                Text("Support this work")
+                    .font(AppFont.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.center)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(.black)
+        }
         .foregroundStyle(.white)
-        .background(.black)
+        .background(Color.black.ignoresSafeArea())
     }
 
     private func heading(_ title: String) -> some View {
@@ -32,5 +56,22 @@ struct HomeView: View {
             .font(AppFont.largeTitle)
             .frame(maxWidth: .infinity, alignment: .center)
             .accessibilityAddTraits(.isHeader)
+    }
+}
+
+struct HomeNavigationLabel: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.body)
+                .accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

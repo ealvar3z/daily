@@ -1,0 +1,12 @@
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -33,7 +33,7 @@
+         .frame(maxWidth: .infinity, maxHeight: .infinity)
+         .safeAreaInset(edge: .bottom, spacing: 0) {
+             Link(destination: URL(string:
+-                "https://jjrgn.substack.com/subscribe?gift=true")!) {
++                "https://jjrgn.substack.com/71f88746")!) {
+                 Text("Support this work")
+                     .font(AppFont.caption)
+                     .fixedSize(horizontal: false, vertical: true)

@@ -1,0 +1,4239 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 589686cb923ea8d5557f0d003eae948c4140e133..3ed398451237c7bc68fa81d82964c48287714355 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -14,6 +14,12 @@ Build a small, native, offline iPhone prayer app. Read
+   automatic scrolling. Preserve pitch and resume position.
+ - Bundle reviewed audio and text. No runtime AI, accounts, or backend.
+ - Do not add analytics.
++- Daily reading: four reference rows (OT, NT, Ps, Prv), below evening.
++  Bundle the approved original NRSV plan with the full Apocrypha. Use Gregorian
++  month/day in the local time zone; February 29 is a catch-up day. Refresh on
++  foregrounding and clock changes. Readers use their own physical Bible.
++  Preserve provenance and special reading notes; do not substitute another
++  edition's numbering or imply Tyndale authorship.
+ - Use the local date for mysteries: Mon/Sat joyful, Tue/Fri sorrowful,
+   Wed/Sun glorious, Thu luminous. Freeze selection during a session.
+ - Morning: Sign of the Cross; acts of faith, hope, charity; Our Father;
+diff --git a/Daily/Content/DailyReadingPlan.swift b/Daily/Content/DailyReadingPlan.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4dd022917b1164b594b3755f41b5ba79556e398
+--- /dev/null
++++ b/Daily/Content/DailyReadingPlan.swift
+@@ -0,0 +1,76 @@
++import Foundation
++
++struct DailyReadingPlan: Sendable {
++    struct Reading: Decodable, Equatable, Sendable {
++        let day: Int
++        let date: String
++        let ot: String
++        let nt: String
++        let ps: String
++        let prv: String
++        let notes: [String]?
++    }
++
++    enum Selection: Equatable, Sendable {
++        case reading(Reading)
++        case catchUp
++        case unavailable
++    }
++
++    enum LoadError: Error {
++        case missingResource
++        case invalidSchedule
++    }
++
++    private struct Document: Decodable {
++        let days: [Reading]
++    }
++
++    private let readings: [String: Reading]
++
++    init(data: Data) throws {
++        let days = try JSONDecoder().decode(Document.self, from: data).days
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
++        let start = calendar.date(from: DateComponents(year: 2001,
++                                                       month: 1, day: 1))!
++        guard days.count == 365 else { throw LoadError.invalidSchedule }
++        var indexed: [String: Reading] = [:]
++        for (index, reading) in days.enumerated() {
++            let date = calendar.date(byAdding: .day, value: index,
++                                     to: start)!
++            let expected = Self.dateKey(date, timeZone: calendar.timeZone)
++            guard reading.day == index + 1, reading.date == expected,
++                  [reading.ot, reading.nt, reading.ps, reading.prv]
++                    .allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines)
++                        .isEmpty }) else {
++                throw LoadError.invalidSchedule
++            }
++            indexed[reading.date] = reading
++        }
++        readings = indexed
++    }
++
++    static func load(bundle: Bundle = .main) throws -> DailyReadingPlan {
++        guard let url = bundle.url(forResource: "daily-reading-plan",
++                                   withExtension: "json") else {
++            throw LoadError.missingResource
++        }
++        return try DailyReadingPlan(data: Data(contentsOf: url))
++    }
++
++    func selection(on date: Date, timeZone: TimeZone = .current) -> Selection {
++        let key = Self.dateKey(date, timeZone: timeZone)
++        if key == "02-29" { return .catchUp }
++        guard let reading = readings[key] else { return .unavailable }
++        return .reading(reading)
++    }
++
++    private static func dateKey(_ date: Date, timeZone: TimeZone) -> String {
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = timeZone
++        let month = calendar.component(.month, from: date)
++        let day = calendar.component(.day, from: date)
++        return "\(month < 10 ? "0" : "")\(month)-\(day < 10 ? "0" : "")\(day)"
++    }
++}
+diff --git a/Daily/Features/Home/DailyReadingView.swift b/Daily/Features/Home/DailyReadingView.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..734803252918f167f24ae7e46aab315ae220356f
+--- /dev/null
++++ b/Daily/Features/Home/DailyReadingView.swift
+@@ -0,0 +1,93 @@
++import SwiftUI
++import UIKit
++
++struct DailyReadingView: View {
++    @Environment(\.scenePhase) private var scenePhase
++    @ScaledMetric(relativeTo: .title2) private var sectionGap = 26
++    @State private var plan: DailyReadingPlan?
++    @State private var date = Date()
++    @State private var loadFailed = false
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 24) {
++            Text("daily reading")
++                .font(AppFont.largeTitle)
++                .frame(maxWidth: .infinity, alignment: .center)
++                .accessibilityAddTraits(.isHeader)
++            if let plan {
++                switch plan.selection(on: date) {
++                case .reading(let reading):
++                    Grid(alignment: .leading, horizontalSpacing: 12,
++                         verticalSpacing: 12) {
++                        row("OT", name: "Old Testament and Apocrypha",
++                            reference: reading.ot)
++                        row("NT", name: "New Testament", reference: reading.nt)
++                        row("Ps", name: "Psalms", reference: reading.ps)
++                        row("Prv", name: "Proverbs", reference: reading.prv)
++                    }
++                    if let notes = reading.notes {
++                        ForEach(notes, id: \.self) { note in
++                            Text(note)
++                                .font(AppFont.secondary)
++                                .fixedSize(horizontal: false, vertical: true)
++                        }
++                    }
++                case .catchUp:
++                    Text("catch up and reflect\nnew readings resume tomorrow")
++                        .font(AppFont.body)
++                case .unavailable:
++                    unavailable
++                }
++            } else if loadFailed {
++                unavailable
++            } else {
++                Text("loading readings…")
++                    .font(AppFont.body)
++            }
++        }
++        .font(AppFont.title)
++        .frame(maxWidth: .infinity, alignment: .leading)
++        .padding(.top, sectionGap)
++        .task {
++            do {
++                let loaded = try await Task.detached(priority: .userInitiated) {
++                    try DailyReadingPlan.load()
++                }.value
++                guard !Task.isCancelled else { return }
++                plan = loaded
++                date = Date()
++            } catch {
++                loadFailed = true
++            }
++        }
++        .onChange(of: scenePhase) { _, phase in
++            if phase == .active { date = Date() }
++        }
++        .onReceive(NotificationCenter.default.publisher(
++            for: UIApplication.significantTimeChangeNotification
++        )) { _ in date = Date() }
++        .onReceive(NotificationCenter.default.publisher(
++            for: NSNotification.Name.NSSystemTimeZoneDidChange
++        )) { _ in date = Date() }
++    }
++
++    private var unavailable: some View {
++        Text("readings unavailable")
++            .font(AppFont.body)
++    }
++
++    private func row(_ label: String, name: String,
++                     reference: String) -> some View {
++        GridRow(alignment: .firstTextBaseline) {
++            Text("\(label):")
++                .fixedSize()
++                .gridColumnAlignment(.leading)
++            Text(reference)
++                .frame(maxWidth: .infinity, alignment: .leading)
++                .fixedSize(horizontal: false, vertical: true)
++                .layoutPriority(1)
++        }
++        .accessibilityElement(children: .ignore)
++        .accessibilityLabel("\(name): \(reference)")
++    }
++}
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+index bf07db4e142cdce46d5b4753e3c9699b495678fb..21d592600e85e3e4b5e5e09eb5726cffc6f8239f 100644
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -11,6 +11,7 @@ struct HomeView: View {
+                 MorningPrayerButton()
+                 SessionPrayerButton(kind: .rosary)
+                 SessionPrayerButton(kind: .evening)
++                DailyReadingView()
+             }
+             .font(AppFont.title)
+             .frame(maxWidth: .infinity, alignment: .leading)
+diff --git a/Daily/Resources/Readings/daily-reading-plan.json b/Daily/Resources/Readings/daily-reading-plan.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..c853110e985a2b0dd1d39ab05a04c07f88372660
+--- /dev/null
++++ b/Daily/Resources/Readings/daily-reading-plan.json
+@@ -0,0 +1,3891 @@
++{
++  "schema_version": 2,
++  "id": "daily-nrsv-full-apocrypha-year",
++  "revision": 2,
++  "title": "daily reading",
++  "status": "NRSV with full Apocrypha draft for review; not integrated into the app",
++  "description": "Original 365-day reading plan with four daily reference rows for use with a physical NRSV Bible containing the full Apocrypha.",
++  "attribution": "Original schedule prepared for daily. Uses the requested OT/NT/Psalms/Proverbs format. Not the Tyndale schedule; not affiliated with or endorsed by Tyndale or the NRSV publishers. No Bible text is reproduced.",
++  "calendar": {
++    "type": "Gregorian",
++    "date_format": "MM-DD",
++    "timezone": "device local time",
++    "days": 365,
++    "february_29": "Catch-up and reflection day, with no new assignments. March 1 always uses 03-01."
++  },
++  "edition": {
++    "translation": "New Revised Standard Version (NRSV, 1989)",
++    "scope": "Old Testament, New Testament, and all 18 named works in the full NRSV Apocrypha",
++    "numbering": "NRSV chapter and verse numbering, replacing the previous Douay–Rheims numbering",
++    "not_targeted": [
++      "NRSV Catholic Edition with only the Catholic deuterocanon",
++      "NRSV Updated Edition (NRSVue)"
++    ],
++    "number_of_named_works": 84,
++    "counting_note": "39 Old Testament books + 27 New Testament books + 18 separately named apocryphal works; additions and Psalm 151 count as separate works here."
++  },
++  "design": {
++    "coverage": "Each named work once. Hebrew Esther and the complete Greek Esther are separate readings, as in the full NRSV. Shared narrative content is intentional.",
++    "ot": "Old Testament in printed book order, excluding Psalms and Proverbs, then the Apocrypha in printed order, excluding Psalm 151.",
++    "nt": "All 27 New Testament books in order.",
++    "ps": "Psalms 1–150 followed by Psalm 151 from the Apocrypha on December 31. Psalm 119 uses its 22 eight-verse stanzas.",
++    "prv": "All 31 chapters of Proverbs, in order, in short daily portions.",
++    "allocation": "OT uses whole chapters within a book, balanced approximately by reference-slot counts. Greek Esther has four manually arranged readings in narrative order. NT, Psalms and Proverbs divide longer chapters to fill 365 daily readings.",
++    "review_needed": "Ordinary split-chapter endpoints are mechanically balanced and still need editorial review for natural thought units. No claim of equal reading time.",
++    "display_labels": {
++      "ot": "OT",
++      "nt": "NT",
++      "ps": "Ps",
++      "prv": "Prv"
++    },
++    "range_format": "Chapter:verse ranges use an en dash; semicolons mean read each listed range in the stated order."
++  },
++  "numbering_notes": [
++    "Psalms now use NRSV numbering: the long acrostic psalm is Psalm 119.",
++    "Baruch has five chapters. Letter of Jeremiah is a separate work, not Baruch 6.",
++    "Daniel has twelve chapters. Prayer of Azariah and the Song of the Three Jews, Susanna, and Bel and the Dragon are separate works.",
++    "Est is the Hebrew-based Old Testament Esther. Gk Est is the complete Greek version in the Apocrypha, including additions A–F.",
++    "Greek Esther follows the printed narrative sequence, not numerical chapter order. Addition D (15:1–16) replaces Hebrew Esther 5:1–2; Greek chapter 5 resumes at verse 3.",
++    "The Prologue to Sirach is explicitly included with its first reading.",
++    "NRSV sometimes leaves traditional verse numbers unused in the main text or places material in footnotes. Read the printed text within each range; reference-slot totals are not a count of actual printed verses.",
++    "Read any unnumbered material printed inside an assigned passage, including the shorter ending of Mark. Study notes and alternative textual readings in footnotes are not separately scheduled."
++  ],
++  "sources": [
++    {
++      "purpose": "NRSV Apocrypha contents and work separation",
++      "publisher": "Cambridge University Press",
++      "url": "https://bibleshelp.cambridge.org/hc/en-gb/articles/17710172930578-Which-Apocryphal-Books-are-included-in-my-Bible-version-translation"
++    },
++    {
++      "purpose": "Chapter maximum verse numbers, used as a structural reference inventory rather than Bible text",
++      "publisher": "CrossWire Bible Society",
++      "url": "https://svn.crosswire.org/svn/sword/trunk/include/canon_nrsva.h",
++      "retrieved": "2026-11-08",
++      "sha256": "a90134910aa20eacf0d7fa9cd17b000e787ef61b77b490664f729a546e995d9e",
++      "normalizations": [
++        "Split the inventory Baruch 6 into Letter of Jeremiah 1.",
++        "Exclude unused Greek Esther 5:1–2 slots and arrange the Greek text in narrative order.",
++        "Display Additional Psalm 1 as Psalm 151."
++      ]
++    },
++    {
++      "purpose": "Greek Esther narrative order and numbering",
++      "publisher": "oremus Bible Browser, NRSV introduction",
++      "url": "https://bible.oremus.org/nrsvae/intro-ap-esther.html"
++    },
++    {
++      "purpose": "Greek Esther addition D endpoint",
++      "publisher": "eBible.com, NRSV",
++      "url": "https://ebible.com/nrsv/section/3004"
++    }
++  ],
++  "validation": {
++    "days": 365,
++    "daily_readings": 1460,
++    "named_works": 84,
++    "apocryphal_works": 18,
++    "reference_slots": 37789,
++    "missing_inventory_slots": 0,
++    "duplicated_inventory_slots": 0,
++    "all_dates_unique": true,
++    "all_four_categories_present_each_day": true,
++    "greek_esther_narrative_order_verified": true,
++    "psalm_119_stanzas_preserved": true,
++    "scope": "Structural coverage against the normalized NRSVA chapter-maxima inventory. Reference slots include numbering gaps and must not be reported as an exact count of NRSV printed verses. Does not establish editorial quality of every stopping point.",
++    "daily_lengths": {
++      "ot": {
++        "minimum_reference_slots": 15,
++        "maximum_reference_slots": 140,
++        "mean_reference_slots": 72.46
++      },
++      "nt": {
++        "minimum_reference_slots": 8,
++        "maximum_reference_slots": 33,
++        "mean_reference_slots": 21.81
++      },
++      "ps": {
++        "minimum_reference_slots": 2,
++        "maximum_reference_slots": 9,
++        "mean_reference_slots": 6.76
++      },
++      "prv": {
++        "minimum_reference_slots": 2,
++        "maximum_reference_slots": 3,
++        "mean_reference_slots": 2.51
++      }
++    }
++  },
++  "books": [
++    {
++      "id": "Gen",
++      "name": "Genesis",
++      "abbreviation": "Gn",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 50,
++      "first_date": "01-01",
++      "last_date": "01-21"
++    },
++    {
++      "id": "Exod",
++      "name": "Exodus",
++      "abbreviation": "Ex",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 40,
++      "first_date": "01-22",
++      "last_date": "02-06"
++    },
++    {
++      "id": "Lev",
++      "name": "Leviticus",
++      "abbreviation": "Lv",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 27,
++      "first_date": "02-07",
++      "last_date": "02-18"
++    },
++    {
++      "id": "Num",
++      "name": "Numbers",
++      "abbreviation": "Nm",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 36,
++      "first_date": "02-19",
++      "last_date": "03-07"
++    },
++    {
++      "id": "Deut",
++      "name": "Deuteronomy",
++      "abbreviation": "Dt",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 34,
++      "first_date": "03-08",
++      "last_date": "03-20"
++    },
++    {
++      "id": "Josh",
++      "name": "Joshua",
++      "abbreviation": "Jos",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 24,
++      "first_date": "03-21",
++      "last_date": "03-29"
++    },
++    {
++      "id": "Judg",
++      "name": "Judges",
++      "abbreviation": "Jgs",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 21,
++      "first_date": "03-30",
++      "last_date": "04-06"
++    },
++    {
++      "id": "Ruth",
++      "name": "Ruth",
++      "abbreviation": "Ru",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 4,
++      "first_date": "04-07",
++      "last_date": "04-07"
++    },
++    {
++      "id": "1Sam",
++      "name": "1 Samuel",
++      "abbreviation": "1 Sm",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 31,
++      "first_date": "04-08",
++      "last_date": "04-18"
++    },
++    {
++      "id": "2Sam",
++      "name": "2 Samuel",
++      "abbreviation": "2 Sm",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 24,
++      "first_date": "04-19",
++      "last_date": "04-27"
++    },
++    {
++      "id": "1Kgs",
++      "name": "1 Kings",
++      "abbreviation": "1 Kgs",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 22,
++      "first_date": "04-28",
++      "last_date": "05-08"
++    },
++    {
++      "id": "2Kgs",
++      "name": "2 Kings",
++      "abbreviation": "2 Kgs",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 25,
++      "first_date": "05-09",
++      "last_date": "05-18"
++    },
++    {
++      "id": "1Chr",
++      "name": "1 Chronicles",
++      "abbreviation": "1 Chr",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 29,
++      "first_date": "05-19",
++      "last_date": "05-31"
++    },
++    {
++      "id": "2Chr",
++      "name": "2 Chronicles",
++      "abbreviation": "2 Chr",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 36,
++      "first_date": "06-01",
++      "last_date": "06-11"
++    },
++    {
++      "id": "Ezra",
++      "name": "Ezra",
++      "abbreviation": "Ezr",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 10,
++      "first_date": "06-12",
++      "last_date": "06-15"
++    },
++    {
++      "id": "Neh",
++      "name": "Nehemiah",
++      "abbreviation": "Neh",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 13,
++      "first_date": "06-16",
++      "last_date": "06-21"
++    },
++    {
++      "id": "Esth",
++      "name": "Esther",
++      "abbreviation": "Est",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 10,
++      "first_date": "06-22",
++      "last_date": "06-23"
++    },
++    {
++      "id": "Job",
++      "name": "Job",
++      "abbreviation": "Jb",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 42,
++      "first_date": "06-24",
++      "last_date": "07-07"
++    },
++    {
++      "id": "Ps",
++      "name": "Psalms",
++      "abbreviation": "Ps",
++      "section": "old_testament",
++      "row": "ps",
++      "chapters": 150,
++      "first_date": "01-01",
++      "last_date": "12-30"
++    },
++    {
++      "id": "Prov",
++      "name": "Proverbs",
++      "abbreviation": "Prv",
++      "section": "old_testament",
++      "row": "prv",
++      "chapters": 31,
++      "first_date": "01-01",
++      "last_date": "12-31"
++    },
++    {
++      "id": "Eccl",
++      "name": "Ecclesiastes",
++      "abbreviation": "Eccl",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 12,
++      "first_date": "07-08",
++      "last_date": "07-10"
++    },
++    {
++      "id": "Song",
++      "name": "Song of Solomon",
++      "abbreviation": "Sg",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 8,
++      "first_date": "07-11",
++      "last_date": "07-12"
++    },
++    {
++      "id": "Isa",
++      "name": "Isaiah",
++      "abbreviation": "Is",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 66,
++      "first_date": "07-13",
++      "last_date": "07-30"
++    },
++    {
++      "id": "Jer",
++      "name": "Jeremiah",
++      "abbreviation": "Jer",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 52,
++      "first_date": "07-31",
++      "last_date": "08-17"
++    },
++    {
++      "id": "Lam",
++      "name": "Lamentations",
++      "abbreviation": "Lam",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 5,
++      "first_date": "08-18",
++      "last_date": "08-19"
++    },
++    {
++      "id": "Ezek",
++      "name": "Ezekiel",
++      "abbreviation": "Ez",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 48,
++      "first_date": "08-20",
++      "last_date": "09-05"
++    },
++    {
++      "id": "Dan",
++      "name": "Daniel",
++      "abbreviation": "Dn",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 12,
++      "first_date": "09-06",
++      "last_date": "09-10"
++    },
++    {
++      "id": "Hos",
++      "name": "Hosea",
++      "abbreviation": "Hos",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 14,
++      "first_date": "09-11",
++      "last_date": "09-13"
++    },
++    {
++      "id": "Joel",
++      "name": "Joel",
++      "abbreviation": "Jl",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 3,
++      "first_date": "09-14",
++      "last_date": "09-14"
++    },
++    {
++      "id": "Amos",
++      "name": "Amos",
++      "abbreviation": "Am",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 9,
++      "first_date": "09-15",
++      "last_date": "09-16"
++    },
++    {
++      "id": "Obad",
++      "name": "Obadiah",
++      "abbreviation": "Ob",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "09-17",
++      "last_date": "09-17"
++    },
++    {
++      "id": "Jonah",
++      "name": "Jonah",
++      "abbreviation": "Jon",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 4,
++      "first_date": "09-18",
++      "last_date": "09-18"
++    },
++    {
++      "id": "Mic",
++      "name": "Micah",
++      "abbreviation": "Mi",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 7,
++      "first_date": "09-19",
++      "last_date": "09-20"
++    },
++    {
++      "id": "Nah",
++      "name": "Nahum",
++      "abbreviation": "Na",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 3,
++      "first_date": "09-21",
++      "last_date": "09-21"
++    },
++    {
++      "id": "Hab",
++      "name": "Habakkuk",
++      "abbreviation": "Hb",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 3,
++      "first_date": "09-22",
++      "last_date": "09-22"
++    },
++    {
++      "id": "Zeph",
++      "name": "Zephaniah",
++      "abbreviation": "Zep",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 3,
++      "first_date": "09-23",
++      "last_date": "09-23"
++    },
++    {
++      "id": "Hag",
++      "name": "Haggai",
++      "abbreviation": "Hg",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 2,
++      "first_date": "09-24",
++      "last_date": "09-24"
++    },
++    {
++      "id": "Zech",
++      "name": "Zechariah",
++      "abbreviation": "Zec",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 14,
++      "first_date": "09-25",
++      "last_date": "09-27"
++    },
++    {
++      "id": "Mal",
++      "name": "Malachi",
++      "abbreviation": "Mal",
++      "section": "old_testament",
++      "row": "ot",
++      "chapters": 4,
++      "first_date": "09-28",
++      "last_date": "09-28"
++    },
++    {
++      "id": "Tob",
++      "name": "Tobit",
++      "abbreviation": "Tob",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 14,
++      "first_date": "09-29",
++      "last_date": "10-01"
++    },
++    {
++      "id": "Jdt",
++      "name": "Judith",
++      "abbreviation": "Jdt",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 16,
++      "first_date": "10-02",
++      "last_date": "10-06"
++    },
++    {
++      "id": "EsthGr",
++      "name": "Esther (Greek)",
++      "abbreviation": "Gk Est",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 16,
++      "first_date": "10-07",
++      "last_date": "10-10"
++    },
++    {
++      "id": "Wis",
++      "name": "Wisdom of Solomon",
++      "abbreviation": "Wis",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 19,
++      "first_date": "10-11",
++      "last_date": "10-16"
++    },
++    {
++      "id": "Sir",
++      "name": "Sirach (Ecclesiasticus)",
++      "abbreviation": "Sir",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 51,
++      "first_date": "10-17",
++      "last_date": "11-04"
++    },
++    {
++      "id": "Bar",
++      "name": "Baruch",
++      "abbreviation": "Bar",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 5,
++      "first_date": "11-05",
++      "last_date": "11-06"
++    },
++    {
++      "id": "LetJer",
++      "name": "Letter of Jeremiah",
++      "abbreviation": "Let Jer",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "11-07",
++      "last_date": "11-07"
++    },
++    {
++      "id": "PrAzar",
++      "name": "Prayer of Azariah and the Song of the Three Jews",
++      "abbreviation": "Pr Azar",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "11-08",
++      "last_date": "11-08"
++    },
++    {
++      "id": "Sus",
++      "name": "Susanna",
++      "abbreviation": "Sus",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "11-09",
++      "last_date": "11-09"
++    },
++    {
++      "id": "Bel",
++      "name": "Bel and the Dragon",
++      "abbreviation": "Bel",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "11-10",
++      "last_date": "11-10"
++    },
++    {
++      "id": "1Macc",
++      "name": "1 Maccabees",
++      "abbreviation": "1 Macc",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 16,
++      "first_date": "11-11",
++      "last_date": "11-23"
++    },
++    {
++      "id": "2Macc",
++      "name": "2 Maccabees",
++      "abbreviation": "2 Macc",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 15,
++      "first_date": "11-24",
++      "last_date": "12-01"
++    },
++    {
++      "id": "1Esd",
++      "name": "1 Esdras",
++      "abbreviation": "1 Esd",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 9,
++      "first_date": "12-02",
++      "last_date": "12-07"
++    },
++    {
++      "id": "PrMan",
++      "name": "Prayer of Manasseh",
++      "abbreviation": "Pr Man",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 1,
++      "first_date": "12-08",
++      "last_date": "12-08"
++    },
++    {
++      "id": "AddPs",
++      "name": "Psalm 151",
++      "abbreviation": "Ps 151",
++      "section": "apocrypha",
++      "row": "ps",
++      "chapters": 1,
++      "first_date": "12-31",
++      "last_date": "12-31"
++    },
++    {
++      "id": "3Macc",
++      "name": "3 Maccabees",
++      "abbreviation": "3 Macc",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 7,
++      "first_date": "12-09",
++      "last_date": "12-11"
++    },
++    {
++      "id": "2Esd",
++      "name": "2 Esdras",
++      "abbreviation": "2 Esd",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 16,
++      "first_date": "12-12",
++      "last_date": "12-24"
++    },
++    {
++      "id": "4Macc",
++      "name": "4 Maccabees",
++      "abbreviation": "4 Macc",
++      "section": "apocrypha",
++      "row": "ot",
++      "chapters": 18,
++      "first_date": "12-25",
++      "last_date": "12-31"
++    },
++    {
++      "id": "Matt",
++      "name": "Matthew",
++      "abbreviation": "Mt",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 28,
++      "first_date": "01-01",
++      "last_date": "02-18"
++    },
++    {
++      "id": "Mark",
++      "name": "Mark",
++      "abbreviation": "Mk",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 16,
++      "first_date": "02-19",
++      "last_date": "03-21"
++    },
++    {
++      "id": "Luke",
++      "name": "Luke",
++      "abbreviation": "Lk",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 24,
++      "first_date": "03-22",
++      "last_date": "05-10"
++    },
++    {
++      "id": "John",
++      "name": "John",
++      "abbreviation": "Jn",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 21,
++      "first_date": "05-11",
++      "last_date": "06-17"
++    },
++    {
++      "id": "Acts",
++      "name": "Acts",
++      "abbreviation": "Acts",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 28,
++      "first_date": "06-18",
++      "last_date": "08-01"
++    },
++    {
++      "id": "Rom",
++      "name": "Romans",
++      "abbreviation": "Rom",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 16,
++      "first_date": "08-02",
++      "last_date": "08-19"
++    },
++    {
++      "id": "1Cor",
++      "name": "1 Corinthians",
++      "abbreviation": "1 Cor",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 16,
++      "first_date": "08-20",
++      "last_date": "09-09"
++    },
++    {
++      "id": "2Cor",
++      "name": "2 Corinthians",
++      "abbreviation": "2 Cor",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 13,
++      "first_date": "09-10",
++      "last_date": "09-22"
++    },
++    {
++      "id": "Gal",
++      "name": "Galatians",
++      "abbreviation": "Gal",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 6,
++      "first_date": "09-23",
++      "last_date": "09-28"
++    },
++    {
++      "id": "Eph",
++      "name": "Ephesians",
++      "abbreviation": "Eph",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 6,
++      "first_date": "09-29",
++      "last_date": "10-04"
++    },
++    {
++      "id": "Phil",
++      "name": "Philippians",
++      "abbreviation": "Phil",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 4,
++      "first_date": "10-05",
++      "last_date": "10-08"
++    },
++    {
++      "id": "Col",
++      "name": "Colossians",
++      "abbreviation": "Col",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 4,
++      "first_date": "10-09",
++      "last_date": "10-12"
++    },
++    {
++      "id": "1Thess",
++      "name": "1 Thessalonians",
++      "abbreviation": "1 Thes",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 5,
++      "first_date": "10-13",
++      "last_date": "10-17"
++    },
++    {
++      "id": "2Thess",
++      "name": "2 Thessalonians",
++      "abbreviation": "2 Thes",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 3,
++      "first_date": "10-18",
++      "last_date": "10-20"
++    },
++    {
++      "id": "1Tim",
++      "name": "1 Timothy",
++      "abbreviation": "1 Tim",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 6,
++      "first_date": "10-21",
++      "last_date": "10-26"
++    },
++    {
++      "id": "2Tim",
++      "name": "2 Timothy",
++      "abbreviation": "2 Tim",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 4,
++      "first_date": "10-27",
++      "last_date": "10-30"
++    },
++    {
++      "id": "Titus",
++      "name": "Titus",
++      "abbreviation": "Titus",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 3,
++      "first_date": "10-31",
++      "last_date": "11-02"
++    },
++    {
++      "id": "Phlm",
++      "name": "Philemon",
++      "abbreviation": "Phlm",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 1,
++      "first_date": "11-03",
++      "last_date": "11-03"
++    },
++    {
++      "id": "Heb",
++      "name": "Hebrews",
++      "abbreviation": "Heb",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 13,
++      "first_date": "11-04",
++      "last_date": "11-18"
++    },
++    {
++      "id": "Jas",
++      "name": "James",
++      "abbreviation": "Jas",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 5,
++      "first_date": "11-19",
++      "last_date": "11-23"
++    },
++    {
++      "id": "1Pet",
++      "name": "1 Peter",
++      "abbreviation": "1 Pet",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 5,
++      "first_date": "11-24",
++      "last_date": "11-28"
++    },
++    {
++      "id": "2Pet",
++      "name": "2 Peter",
++      "abbreviation": "2 Pet",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 3,
++      "first_date": "11-29",
++      "last_date": "12-01"
++    },
++    {
++      "id": "1John",
++      "name": "1 John",
++      "abbreviation": "1 Jn",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 5,
++      "first_date": "12-02",
++      "last_date": "12-06"
++    },
++    {
++      "id": "2John",
++      "name": "2 John",
++      "abbreviation": "2 Jn",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 1,
++      "first_date": "12-07",
++      "last_date": "12-07"
++    },
++    {
++      "id": "3John",
++      "name": "3 John",
++      "abbreviation": "3 Jn",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 1,
++      "first_date": "12-08",
++      "last_date": "12-08"
++    },
++    {
++      "id": "Jude",
++      "name": "Jude",
++      "abbreviation": "Jude",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 1,
++      "first_date": "12-09",
++      "last_date": "12-09"
++    },
++    {
++      "id": "Rev",
++      "name": "Revelation",
++      "abbreviation": "Rev",
++      "section": "new_testament",
++      "row": "nt",
++      "chapters": 22,
++      "first_date": "12-10",
++      "last_date": "12-31"
++    }
++  ],
++  "days": [
++    {
++      "day": 1,
++      "date": "01-01",
++      "ot": "Gn 1:1–3:24",
++      "nt": "Mt 1:1–25",
++      "ps": "1:1–6",
++      "prv": "1:1–3"
++    },
++    {
++      "day": 2,
++      "date": "01-02",
++      "ot": "Gn 4:1–6:22",
++      "nt": "Mt 2:1–23",
++      "ps": "2:1–6",
++      "prv": "1:4–5"
++    },
++    {
++      "day": 3,
++      "date": "01-03",
++      "ot": "Gn 7:1–9:29",
++      "nt": "Mt 3:1–17",
++      "ps": "2:7–12",
++      "prv": "1:6–8"
++    },
++    {
++      "day": 4,
++      "date": "01-04",
++      "ot": "Gn 10:1–11:32",
++      "nt": "Mt 4:1–25",
++      "ps": "3:1–8",
++      "prv": "1:9–10"
++    },
++    {
++      "day": 5,
++      "date": "01-05",
++      "ot": "Gn 12:1–14:24",
++      "nt": "Mt 5:1–24",
++      "ps": "4:1–8",
++      "prv": "1:11–13"
++    },
++    {
++      "day": 6,
++      "date": "01-06",
++      "ot": "Gn 15:1–17:27",
++      "nt": "Mt 5:25–48",
++      "ps": "5:1–6",
++      "prv": "1:14–15"
++    },
++    {
++      "day": 7,
++      "date": "01-07",
++      "ot": "Gn 18:1–19:38",
++      "nt": "Mt 6:1–17",
++      "ps": "5:7–12",
++      "prv": "1:16–18"
++    },
++    {
++      "day": 8,
++      "date": "01-08",
++      "ot": "Gn 20:1–22:24",
++      "nt": "Mt 6:18–34",
++      "ps": "6:1–5",
++      "prv": "1:19–20"
++    },
++    {
++      "day": 9,
++      "date": "01-09",
++      "ot": "Gn 23:1–24:67",
++      "nt": "Mt 7:1–29",
++      "ps": "6:6–10",
++      "prv": "1:21–23"
++    },
++    {
++      "day": 10,
++      "date": "01-10",
++      "ot": "Gn 25:1–26:35",
++      "nt": "Mt 8:1–17",
++      "ps": "7:1–6",
++      "prv": "1:24–25"
++    },
++    {
++      "day": 11,
++      "date": "01-11",
++      "ot": "Gn 27:1–28:22",
++      "nt": "Mt 8:18–34",
++      "ps": "7:7–11",
++      "prv": "1:26–28"
++    },
++    {
++      "day": 12,
++      "date": "01-12",
++      "ot": "Gn 29:1–30:43",
++      "nt": "Mt 9:1–19",
++      "ps": "7:12–17",
++      "prv": "1:29–30"
++    },
++    {
++      "day": 13,
++      "date": "01-13",
++      "ot": "Gn 31:1–32:32",
++      "nt": "Mt 9:20–38",
++      "ps": "8:1–9",
++      "prv": "1:31–33"
++    },
++    {
++      "day": 14,
++      "date": "01-14",
++      "ot": "Gn 33:1–35:29",
++      "nt": "Mt 10:1–21",
++      "ps": "9:1–7",
++      "prv": "2:1–2"
++    },
++    {
++      "day": 15,
++      "date": "01-15",
++      "ot": "Gn 36:1–37:36",
++      "nt": "Mt 10:22–42",
++      "ps": "9:8–13",
++      "prv": "2:3–5"
++    },
++    {
++      "day": 16,
++      "date": "01-16",
++      "ot": "Gn 38:1–40:23",
++      "nt": "Mt 11:1–30",
++      "ps": "9:14–20",
++      "prv": "2:6–7"
++    },
++    {
++      "day": 17,
++      "date": "01-17",
++      "ot": "Gn 41:1–57",
++      "nt": "Mt 12:1–25",
++      "ps": "10:1–6",
++      "prv": "2:8–10"
++    },
++    {
++      "day": 18,
++      "date": "01-18",
++      "ot": "Gn 42:1–43:34",
++      "nt": "Mt 12:26–50",
++      "ps": "10:7–12",
++      "prv": "2:11–12"
++    },
++    {
++      "day": 19,
++      "date": "01-19",
++      "ot": "Gn 44:1–45:28",
++      "nt": "Mt 13:1–19",
++      "ps": "10:13–18",
++      "prv": "2:13–15"
++    },
++    {
++      "day": 20,
++      "date": "01-20",
++      "ot": "Gn 46:1–47:31",
++      "nt": "Mt 13:20–39",
++      "ps": "11:1–7",
++      "prv": "2:16–17"
++    },
++    {
++      "day": 21,
++      "date": "01-21",
++      "ot": "Gn 48:1–50:26",
++      "nt": "Mt 13:40–58",
++      "ps": "12:1–8",
++      "prv": "2:18–20"
++    },
++    {
++      "day": 22,
++      "date": "01-22",
++      "ot": "Ex 1:1–3:22",
++      "nt": "Mt 14:1–18",
++      "ps": "13:1–6",
++      "prv": "2:21–22"
++    },
++    {
++      "day": 23,
++      "date": "01-23",
++      "ot": "Ex 4:1–6:30",
++      "nt": "Mt 14:19–36",
++      "ps": "14:1–7",
++      "prv": "3:1–2"
++    },
++    {
++      "day": 24,
++      "date": "01-24",
++      "ot": "Ex 7:1–8:32",
++      "nt": "Mt 15:1–20",
++      "ps": "15:1–5",
++      "prv": "3:3–5"
++    },
++    {
++      "day": 25,
++      "date": "01-25",
++      "ot": "Ex 9:1–11:10",
++      "nt": "Mt 15:21–39",
++      "ps": "16:1–6",
++      "prv": "3:6–8"
++    },
++    {
++      "day": 26,
++      "date": "01-26",
++      "ot": "Ex 12:1–13:22",
++      "nt": "Mt 16:1–28",
++      "ps": "16:7–11",
++      "prv": "3:9–10"
++    },
++    {
++      "day": 27,
++      "date": "01-27",
++      "ot": "Ex 14:1–15:27",
++      "nt": "Mt 17:1–27",
++      "ps": "17:1–8",
++      "prv": "3:11–12"
++    },
++    {
++      "day": 28,
++      "date": "01-28",
++      "ot": "Ex 16:1–18:27",
++      "nt": "Mt 18:1–18",
++      "ps": "17:9–15",
++      "prv": "3:13–15"
++    },
++    {
++      "day": 29,
++      "date": "01-29",
++      "ot": "Ex 19:1–21:36",
++      "nt": "Mt 18:19–35",
++      "ps": "18:1–7",
++      "prv": "3:16–18"
++    },
++    {
++      "day": 30,
++      "date": "01-30",
++      "ot": "Ex 22:1–24:18",
++      "nt": "Mt 19:1–30",
++      "ps": "18:8–14",
++      "prv": "3:19–20"
++    },
++    {
++      "day": 31,
++      "date": "01-31",
++      "ot": "Ex 25:1–26:37",
++      "nt": "Mt 20:1–17",
++      "ps": "18:15–21",
++      "prv": "3:21–22"
++    },
++    {
++      "day": 32,
++      "date": "02-01",
++      "ot": "Ex 27:1–28:43",
++      "nt": "Mt 20:18–34",
++      "ps": "18:22–29",
++      "prv": "3:23–25"
++    },
++    {
++      "day": 33,
++      "date": "02-02",
++      "ot": "Ex 29:1–30:38",
++      "nt": "Mt 21:1–23",
++      "ps": "18:30–36",
++      "prv": "3:26–28"
++    },
++    {
++      "day": 34,
++      "date": "02-03",
++      "ot": "Ex 31:1–33:23",
++      "nt": "Mt 21:24–46",
++      "ps": "18:37–43",
++      "prv": "3:29–30"
++    },
++    {
++      "day": 35,
++      "date": "02-04",
++      "ot": "Ex 34:1–35:35",
++      "nt": "Mt 22:1–23",
++      "ps": "18:44–50",
++      "prv": "3:31–32"
++    },
++    {
++      "day": 36,
++      "date": "02-05",
++      "ot": "Ex 36:1–38:31",
++      "nt": "Mt 22:24–46",
++      "ps": "19:1–7",
++      "prv": "3:33–35"
++    },
++    {
++      "day": 37,
++      "date": "02-06",
++      "ot": "Ex 39:1–40:38",
++      "nt": "Mt 23:1–20",
++      "ps": "19:8–14",
++      "prv": "4:1–2"
++    },
++    {
++      "day": 38,
++      "date": "02-07",
++      "ot": "Lv 1:1–4:35",
++      "nt": "Mt 23:21–39",
++      "ps": "20:1–9",
++      "prv": "4:3–5"
++    },
++    {
++      "day": 39,
++      "date": "02-08",
++      "ot": "Lv 5:1–7:38",
++      "nt": "Mt 24:1–26",
++      "ps": "21:1–6",
++      "prv": "4:6–7"
++    },
++    {
++      "day": 40,
++      "date": "02-09",
++      "ot": "Lv 8:1–9:24",
++      "nt": "Mt 24:27–51",
++      "ps": "21:7–13",
++      "prv": "4:8–10"
++    },
++    {
++      "day": 41,
++      "date": "02-10",
++      "ot": "Lv 10:1–11:47",
++      "nt": "Mt 25:1–23",
++      "ps": "22:1–8",
++      "prv": "4:11–12"
++    },
++    {
++      "day": 42,
++      "date": "02-11",
++      "ot": "Lv 12:1–13:59",
++      "nt": "Mt 25:24–46",
++      "ps": "22:9–16",
++      "prv": "4:13–15"
++    },
++    {
++      "day": 43,
++      "date": "02-12",
++      "ot": "Lv 14:1–57",
++      "nt": "Mt 26:1–25",
++      "ps": "22:17–23",
++      "prv": "4:16–17"
++    },
++    {
++      "day": 44,
++      "date": "02-13",
++      "ot": "Lv 15:1–16:34",
++      "nt": "Mt 26:26–50",
++      "ps": "22:24–31",
++      "prv": "4:18–20"
++    },
++    {
++      "day": 45,
++      "date": "02-14",
++      "ot": "Lv 17:1–19:37",
++      "nt": "Mt 26:51–75",
++      "ps": "23:1–6",
++      "prv": "4:21–22"
++    },
++    {
++      "day": 46,
++      "date": "02-15",
++      "ot": "Lv 20:1–22:33",
++      "nt": "Mt 27:1–22",
++      "ps": "24:1–5",
++      "prv": "4:23–25"
++    },
++    {
++      "day": 47,
++      "date": "02-16",
++      "ot": "Lv 23:1–24:23",
++      "nt": "Mt 27:23–44",
++      "ps": "24:6–10",
++      "prv": "4:26–27"
++    },
++    {
++      "day": 48,
++      "date": "02-17",
++      "ot": "Lv 25:1–55",
++      "nt": "Mt 27:45–66",
++      "ps": "25:1–7",
++      "prv": "5:1–3"
++    },
++    {
++      "day": 49,
++      "date": "02-18",
++      "ot": "Lv 26:1–27:34",
++      "nt": "Mt 28:1–20",
++      "ps": "25:8–15",
++      "prv": "5:4–5"
++    },
++    {
++      "day": 50,
++      "date": "02-19",
++      "ot": "Nm 1:1–54",
++      "nt": "Mk 1:1–22",
++      "ps": "25:16–22",
++      "prv": "5:6–8"
++    },
++    {
++      "day": 51,
++      "date": "02-20",
++      "ot": "Nm 2:1–3:51",
++      "nt": "Mk 1:23–45",
++      "ps": "26:1–6",
++      "prv": "5:9–10"
++    },
++    {
++      "day": 52,
++      "date": "02-21",
++      "ot": "Nm 4:1–49",
++      "nt": "Mk 2:1–28",
++      "ps": "26:7–12",
++      "prv": "5:11–13"
++    },
++    {
++      "day": 53,
++      "date": "02-22",
++      "ot": "Nm 5:1–6:27",
++      "nt": "Mk 3:1–18",
++      "ps": "27:1–7",
++      "prv": "5:14–15"
++    },
++    {
++      "day": 54,
++      "date": "02-23",
++      "ot": "Nm 7:1–89",
++      "nt": "Mk 3:19–35",
++      "ps": "27:8–14",
++      "prv": "5:16–18"
++    },
++    {
++      "day": 55,
++      "date": "02-24",
++      "ot": "Nm 8:1–10:36",
++      "nt": "Mk 4:1–20",
++      "ps": "28:1–9",
++      "prv": "5:19–20"
++    },
++    {
++      "day": 56,
++      "date": "02-25",
++      "ot": "Nm 11:1–13:33",
++      "nt": "Mk 4:21–41",
++      "ps": "29:1–6",
++      "prv": "5:21–23"
++    },
++    {
++      "day": 57,
++      "date": "02-26",
++      "ot": "Nm 14:1–15:41",
++      "nt": "Mk 5:1–22",
++      "ps": "29:7–11",
++      "prv": "6:1–2"
++    },
++    {
++      "day": 58,
++      "date": "02-27",
++      "ot": "Nm 16:1–17:13",
++      "nt": "Mk 5:23–43",
++      "ps": "30:1–6",
++      "prv": "6:3–5"
++    },
++    {
++      "day": 59,
++      "date": "02-28",
++      "ot": "Nm 18:1–20:29",
++      "nt": "Mk 6:1–28",
++      "ps": "30:7–12",
++      "prv": "6:6–8"
++    },
++    {
++      "day": 60,
++      "date": "03-01",
++      "ot": "Nm 21:1–22:41",
++      "nt": "Mk 6:29–56",
++      "ps": "31:1–8",
++      "prv": "6:9–10"
++    },
++    {
++      "day": 61,
++      "date": "03-02",
++      "ot": "Nm 23:1–25:18",
++      "nt": "Mk 7:1–18",
++      "ps": "31:9–16",
++      "prv": "6:11–12"
++    },
++    {
++      "day": 62,
++      "date": "03-03",
++      "ot": "Nm 26:1–27:23",
++      "nt": "Mk 7:19–37",
++      "ps": "31:17–24",
++      "prv": "6:13–15"
++    },
++    {
++      "day": 63,
++      "date": "03-04",
++      "ot": "Nm 28:1–29:40",
++      "nt": "Mk 8:1–19",
++      "ps": "32:1–6",
++      "prv": "6:16–18"
++    },
++    {
++      "day": 64,
++      "date": "03-05",
++      "ot": "Nm 30:1–31:54",
++      "nt": "Mk 8:20–38",
++      "ps": "32:7–11",
++      "prv": "6:19–20"
++    },
++    {
++      "day": 65,
++      "date": "03-06",
++      "ot": "Nm 32:1–33:56",
++      "nt": "Mk 9:1–25",
++      "ps": "33:1–7",
++      "prv": "6:21–22"
++    },
++    {
++      "day": 66,
++      "date": "03-07",
++      "ot": "Nm 34:1–36:13",
++      "nt": "Mk 9:26–50",
++      "ps": "33:8–15",
++      "prv": "6:23–25"
++    },
++    {
++      "day": 67,
++      "date": "03-08",
++      "ot": "Dt 1:1–2:37",
++      "nt": "Mk 10:1–26",
++      "ps": "33:16–22",
++      "prv": "6:26–28"
++    },
++    {
++      "day": 68,
++      "date": "03-09",
++      "ot": "Dt 3:1–4:49",
++      "nt": "Mk 10:27–52",
++      "ps": "34:1–7",
++      "prv": "6:29–30"
++    },
++    {
++      "day": 69,
++      "date": "03-10",
++      "ot": "Dt 5:1–7:26",
++      "nt": "Mk 11:1–16",
++      "ps": "34:8–15",
++      "prv": "6:31–32"
++    },
++    {
++      "day": 70,
++      "date": "03-11",
++      "ot": "Dt 8:1–10:22",
++      "nt": "Mk 11:17–33",
++      "ps": "34:16–22",
++      "prv": "6:33–35"
++    },
++    {
++      "day": 71,
++      "date": "03-12",
++      "ot": "Dt 11:1–12:32",
++      "nt": "Mk 12:1–22",
++      "ps": "35:1–7",
++      "prv": "7:1–2"
++    },
++    {
++      "day": 72,
++      "date": "03-13",
++      "ot": "Dt 13:1–15:23",
++      "nt": "Mk 12:23–44",
++      "ps": "35:8–14",
++      "prv": "7:3–5"
++    },
++    {
++      "day": 73,
++      "date": "03-14",
++      "ot": "Dt 16:1–18:22",
++      "nt": "Mk 13:1–18",
++      "ps": "35:15–21",
++      "prv": "7:6–7"
++    },
++    {
++      "day": 74,
++      "date": "03-15",
++      "ot": "Dt 19:1–21:23",
++      "nt": "Mk 13:19–37",
++      "ps": "35:22–28",
++      "prv": "7:8–10"
++    },
++    {
++      "day": 75,
++      "date": "03-16",
++      "ot": "Dt 22:1–24:22",
++      "nt": "Mk 14:1–24",
++      "ps": "36:1–6",
++      "prv": "7:11–12"
++    },
++    {
++      "day": 76,
++      "date": "03-17",
++      "ot": "Dt 25:1–27:26",
++      "nt": "Mk 14:25–48",
++      "ps": "36:7–12",
++      "prv": "7:13–15"
++    },
++    {
++      "day": 77,
++      "date": "03-18",
++      "ot": "Dt 28:1–68",
++      "nt": "Mk 14:49–72",
++      "ps": "37:1–7",
++      "prv": "7:16–17"
++    },
++    {
++      "day": 78,
++      "date": "03-19",
++      "ot": "Dt 29:1–31:30",
++      "nt": "Mk 15:1–24",
++      "ps": "37:8–13",
++      "prv": "7:18–20"
++    },
++    {
++      "day": 79,
++      "date": "03-20",
++      "ot": "Dt 32:1–34:12",
++      "nt": "Mk 15:25–47",
++      "ps": "37:14–20",
++      "prv": "7:21–22"
++    },
++    {
++      "day": 80,
++      "date": "03-21",
++      "ot": "Jos 1:1–4:24",
++      "nt": "Mk 16:1–20",
++      "ps": "37:21–27",
++      "prv": "7:23–25",
++      "notes": [
++        "Include both printed endings of Mark, including the unnumbered shorter ending."
++      ]
++    },
++    {
++      "day": 81,
++      "date": "03-22",
++      "ot": "Jos 5:1–7:26",
++      "nt": "Lk 1:1–27",
++      "ps": "37:28–33",
++      "prv": "7:26–27"
++    },
++    {
++      "day": 82,
++      "date": "03-23",
++      "ot": "Jos 8:1–9:27",
++      "nt": "Lk 1:28–53",
++      "ps": "37:34–40",
++      "prv": "8:1–3"
++    },
++    {
++      "day": 83,
++      "date": "03-24",
++      "ot": "Jos 10:1–11:23",
++      "nt": "Lk 1:54–80",
++      "ps": "38:1–7",
++      "prv": "8:4–5"
++    },
++    {
++      "day": 84,
++      "date": "03-25",
++      "ot": "Jos 12:1–14:15",
++      "nt": "Lk 2:1–26",
++      "ps": "38:8–15",
++      "prv": "8:6–8"
++    },
++    {
++      "day": 85,
++      "date": "03-26",
++      "ot": "Jos 15:1–17:18",
++      "nt": "Lk 2:27–52",
++      "ps": "38:16–22",
++      "prv": "8:9–10"
++    },
++    {
++      "day": 86,
++      "date": "03-27",
++      "ot": "Jos 18:1–19:51",
++      "nt": "Lk 3:1–19",
++      "ps": "39:1–6",
++      "prv": "8:11–13"
++    },
++    {
++      "day": 87,
++      "date": "03-28",
++      "ot": "Jos 20:1–21:45",
++      "nt": "Lk 3:20–38",
++      "ps": "39:7–13",
++      "prv": "8:14–15"
++    },
++    {
++      "day": 88,
++      "date": "03-29",
++      "ot": "Jos 22:1–24:33",
++      "nt": "Lk 4:1–22",
++      "ps": "40:1–6",
++      "prv": "8:16–18"
++    },
++    {
++      "day": 89,
++      "date": "03-30",
++      "ot": "Jgs 1:1–3:31",
++      "nt": "Lk 4:23–44",
++      "ps": "40:7–11",
++      "prv": "8:19–21"
++    },
++    {
++      "day": 90,
++      "date": "03-31",
++      "ot": "Jgs 4:1–6:40",
++      "nt": "Lk 5:1–20",
++      "ps": "40:12–17",
++      "prv": "8:22–23"
++    },
++    {
++      "day": 91,
++      "date": "04-01",
++      "ot": "Jgs 7:1–8:35",
++      "nt": "Lk 5:21–39",
++      "ps": "41:1–6",
++      "prv": "8:24–26"
++    },
++    {
++      "day": 92,
++      "date": "04-02",
++      "ot": "Jgs 9:1–10:18",
++      "nt": "Lk 6:1–24",
++      "ps": "41:7–13",
++      "prv": "8:27–28"
++    },
++    {
++      "day": 93,
++      "date": "04-03",
++      "ot": "Jgs 11:1–13:25",
++      "nt": "Lk 6:25–49",
++      "ps": "42:1–6",
++      "prv": "8:29–31"
++    },
++    {
++      "day": 94,
++      "date": "04-04",
++      "ot": "Jgs 14:1–16:31",
++      "nt": "Lk 7:1–25",
++      "ps": "42:7–11",
++      "prv": "8:32–33"
++    },
++    {
++      "day": 95,
++      "date": "04-05",
++      "ot": "Jgs 17:1–19:30",
++      "nt": "Lk 7:26–50",
++      "ps": "43:1–5",
++      "prv": "8:34–36"
++    },
++    {
++      "day": 96,
++      "date": "04-06",
++      "ot": "Jgs 20:1–21:25",
++      "nt": "Lk 8:1–28",
++      "ps": "44:1–6",
++      "prv": "9:1–3"
++    },
++    {
++      "day": 97,
++      "date": "04-07",
++      "ot": "Ru 1:1–4:22",
++      "nt": "Lk 8:29–56",
++      "ps": "44:7–13",
++      "prv": "9:4–5"
++    },
++    {
++      "day": 98,
++      "date": "04-08",
++      "ot": "1 Sm 1:1–2:36",
++      "nt": "Lk 9:1–21",
++      "ps": "44:14–20",
++      "prv": "9:6–8"
++    },
++    {
++      "day": 99,
++      "date": "04-09",
++      "ot": "1 Sm 3:1–6:21",
++      "nt": "Lk 9:22–41",
++      "ps": "44:21–26",
++      "prv": "9:9–10"
++    },
++    {
++      "day": 100,
++      "date": "04-10",
++      "ot": "1 Sm 7:1–9:27",
++      "nt": "Lk 9:42–62",
++      "ps": "45:1–6",
++      "prv": "9:11–13"
++    },
++    {
++      "day": 101,
++      "date": "04-11",
++      "ot": "1 Sm 10:1–12:25",
++      "nt": "Lk 10:1–21",
++      "ps": "45:7–11",
++      "prv": "9:14–15"
++    },
++    {
++      "day": 102,
++      "date": "04-12",
++      "ot": "1 Sm 13:1–14:52",
++      "nt": "Lk 10:22–42",
++      "ps": "45:12–17",
++      "prv": "9:16–18"
++    },
++    {
++      "day": 103,
++      "date": "04-13",
++      "ot": "1 Sm 15:1–16:23",
++      "nt": "Lk 11:1–27",
++      "ps": "46:1–6",
++      "prv": "10:1–2"
++    },
++    {
++      "day": 104,
++      "date": "04-14",
++      "ot": "1 Sm 17:1–18:30",
++      "nt": "Lk 11:28–54",
++      "ps": "46:7–11",
++      "prv": "10:3–5"
++    },
++    {
++      "day": 105,
++      "date": "04-15",
++      "ot": "1 Sm 19:1–21:15",
++      "nt": "Lk 12:1–20",
++      "ps": "47:1–9",
++      "prv": "10:6–7"
++    },
++    {
++      "day": 106,
++      "date": "04-16",
++      "ot": "1 Sm 22:1–24:22",
++      "nt": "Lk 12:21–39",
++      "ps": "48:1–7",
++      "prv": "10:8–10"
++    },
++    {
++      "day": 107,
++      "date": "04-17",
++      "ot": "1 Sm 25:1–27:12",
++      "nt": "Lk 12:40–59",
++      "ps": "48:8–14",
++      "prv": "10:11–12"
++    },
++    {
++      "day": 108,
++      "date": "04-18",
++      "ot": "1 Sm 28:1–31:13",
++      "nt": "Lk 13:1–18",
++      "ps": "49:1–7",
++      "prv": "10:13–15"
++    },
++    {
++      "day": 109,
++      "date": "04-19",
++      "ot": "2 Sm 1:1–3:39",
++      "nt": "Lk 13:19–35",
++      "ps": "49:8–13",
++      "prv": "10:16–17"
++    },
++    {
++      "day": 110,
++      "date": "04-20",
++      "ot": "2 Sm 4:1–7:29",
++      "nt": "Lk 14:1–18",
++      "ps": "49:14–20",
++      "prv": "10:18–20"
++    },
++    {
++      "day": 111,
++      "date": "04-21",
++      "ot": "2 Sm 8:1–11:27",
++      "nt": "Lk 14:19–35",
++      "ps": "50:1–8",
++      "prv": "10:21–22"
++    },
++    {
++      "day": 112,
++      "date": "04-22",
++      "ot": "2 Sm 12:1–13:39",
++      "nt": "Lk 15:1–32",
++      "ps": "50:9–15",
++      "prv": "10:23–25"
++    },
++    {
++      "day": 113,
++      "date": "04-23",
++      "ot": "2 Sm 14:1–15:37",
++      "nt": "Lk 16:1–31",
++      "ps": "50:16–23",
++      "prv": "10:26–27"
++    },
++    {
++      "day": 114,
++      "date": "04-24",
++      "ot": "2 Sm 16:1–18:33",
++      "nt": "Lk 17:1–18",
++      "ps": "51:1–6",
++      "prv": "10:28–30"
++    },
++    {
++      "day": 115,
++      "date": "04-25",
++      "ot": "2 Sm 19:1–20:26",
++      "nt": "Lk 17:19–37",
++      "ps": "51:7–13",
++      "prv": "10:31–32"
++    },
++    {
++      "day": 116,
++      "date": "04-26",
++      "ot": "2 Sm 21:1–22:51",
++      "nt": "Lk 18:1–22",
++      "ps": "51:14–19",
++      "prv": "11:1–3"
++    },
++    {
++      "day": 117,
++      "date": "04-27",
++      "ot": "2 Sm 23:1–24:25",
++      "nt": "Lk 18:23–43",
++      "ps": "52:1–9",
++      "prv": "11:4–5"
++    },
++    {
++      "day": 118,
++      "date": "04-28",
++      "ot": "1 Kgs 1:1–2:46",
++      "nt": "Lk 19:1–24",
++      "ps": "53:1–6",
++      "prv": "11:6–8"
++    },
++    {
++      "day": 119,
++      "date": "04-29",
++      "ot": "1 Kgs 3:1–5:18",
++      "nt": "Lk 19:25–48",
++      "ps": "54:1–7",
++      "prv": "11:9–10"
++    },
++    {
++      "day": 120,
++      "date": "04-30",
++      "ot": "1 Kgs 6:1–7:51",
++      "nt": "Lk 20:1–24",
++      "ps": "55:1–8",
++      "prv": "11:11–13"
++    },
++    {
++      "day": 121,
++      "date": "05-01",
++      "ot": "1 Kgs 8:1–66",
++      "nt": "Lk 20:25–47",
++      "ps": "55:9–15",
++      "prv": "11:14–16"
++    },
++    {
++      "day": 122,
++      "date": "05-02",
++      "ot": "1 Kgs 9:1–10:29",
++      "nt": "Lk 21:1–19",
++      "ps": "55:16–23",
++      "prv": "11:17–18"
++    },
++    {
++      "day": 123,
++      "date": "05-03",
++      "ot": "1 Kgs 11:1–12:33",
++      "nt": "Lk 21:20–38",
++      "ps": "56:1–6",
++      "prv": "11:19–21"
++    },
++    {
++      "day": 124,
++      "date": "05-04",
++      "ot": "1 Kgs 13:1–14:31",
++      "nt": "Lk 22:1–24",
++      "ps": "56:7–13",
++      "prv": "11:22–23"
++    },
++    {
++      "day": 125,
++      "date": "05-05",
++      "ot": "1 Kgs 15:1–16:34",
++      "nt": "Lk 22:25–47",
++      "ps": "57:1–6",
++      "prv": "11:24–26"
++    },
++    {
++      "day": 126,
++      "date": "05-06",
++      "ot": "1 Kgs 17:1–18:46",
++      "nt": "Lk 22:48–71",
++      "ps": "57:7–11",
++      "prv": "11:27–28"
++    },
++    {
++      "day": 127,
++      "date": "05-07",
++      "ot": "1 Kgs 19:1–20:43",
++      "nt": "Lk 23:1–28",
++      "ps": "58:1–6",
++      "prv": "11:29–31"
++    },
++    {
++      "day": 128,
++      "date": "05-08",
++      "ot": "1 Kgs 21:1–22:53",
++      "nt": "Lk 23:29–56",
++      "ps": "58:7–11",
++      "prv": "12:1–3"
++    },
++    {
++      "day": 129,
++      "date": "05-09",
++      "ot": "2 Kgs 1:1–3:27",
++      "nt": "Lk 24:1–26",
++      "ps": "59:1–6",
++      "prv": "12:4–5"
++    },
++    {
++      "day": 130,
++      "date": "05-10",
++      "ot": "2 Kgs 4:1–5:27",
++      "nt": "Lk 24:27–53",
++      "ps": "59:7–11",
++      "prv": "12:6–8"
++    },
++    {
++      "day": 131,
++      "date": "05-11",
++      "ot": "2 Kgs 6:1–8:29",
++      "nt": "Jn 1:1–26",
++      "ps": "59:12–17",
++      "prv": "12:9–10"
++    },
++    {
++      "day": 132,
++      "date": "05-12",
++      "ot": "2 Kgs 9:1–10:36",
++      "nt": "Jn 1:27–51",
++      "ps": "60:1–6",
++      "prv": "12:11–13"
++    },
++    {
++      "day": 133,
++      "date": "05-13",
++      "ot": "2 Kgs 11:1–13:25",
++      "nt": "Jn 2:1–25",
++      "ps": "60:7–12",
++      "prv": "12:14–15"
++    },
++    {
++      "day": 134,
++      "date": "05-14",
++      "ot": "2 Kgs 14:1–15:38",
++      "nt": "Jn 3:1–18",
++      "ps": "61:1–8",
++      "prv": "12:16–18"
++    },
++    {
++      "day": 135,
++      "date": "05-15",
++      "ot": "2 Kgs 16:1–17:41",
++      "nt": "Jn 3:19–36",
++      "ps": "62:1–6",
++      "prv": "12:19–20"
++    },
++    {
++      "day": 136,
++      "date": "05-16",
++      "ot": "2 Kgs 18:1–19:37",
++      "nt": "Jn 4:1–27",
++      "ps": "62:7–12",
++      "prv": "12:21–23"
++    },
++    {
++      "day": 137,
++      "date": "05-17",
++      "ot": "2 Kgs 20:1–22:20",
++      "nt": "Jn 4:28–54",
++      "ps": "63:1–6",
++      "prv": "12:24–25"
++    },
++    {
++      "day": 138,
++      "date": "05-18",
++      "ot": "2 Kgs 23:1–25:30",
++      "nt": "Jn 5:1–24",
++      "ps": "63:7–11",
++      "prv": "12:26–28"
++    },
++    {
++      "day": 139,
++      "date": "05-19",
++      "ot": "1 Chr 1:1–54",
++      "nt": "Jn 5:25–47",
++      "ps": "64:1–5",
++      "prv": "13:1–2"
++    },
++    {
++      "day": 140,
++      "date": "05-20",
++      "ot": "1 Chr 2:1–3:24",
++      "nt": "Jn 6:1–24",
++      "ps": "64:6–10",
++      "prv": "13:3–5"
++    },
++    {
++      "day": 141,
++      "date": "05-21",
++      "ot": "1 Chr 4:1–5:26",
++      "nt": "Jn 6:25–47",
++      "ps": "65:1–6",
++      "prv": "13:6–8"
++    },
++    {
++      "day": 142,
++      "date": "05-22",
++      "ot": "1 Chr 6:1–81",
++      "nt": "Jn 6:48–71",
++      "ps": "65:7–13",
++      "prv": "13:9–10"
++    },
++    {
++      "day": 143,
++      "date": "05-23",
++      "ot": "1 Chr 7:1–8:40",
++      "nt": "Jn 7:1–26",
++      "ps": "66:1–7",
++      "prv": "13:11–12"
++    },
++    {
++      "day": 144,
++      "date": "05-24",
++      "ot": "1 Chr 9:1–10:14",
++      "nt": "Jn 7:27–53",
++      "ps": "66:8–13",
++      "prv": "13:13–15"
++    },
++    {
++      "day": 145,
++      "date": "05-25",
++      "ot": "1 Chr 11:1–12:40",
++      "nt": "Jn 8:1–20",
++      "ps": "66:14–20",
++      "prv": "13:16–18"
++    },
++    {
++      "day": 146,
++      "date": "05-26",
++      "ot": "1 Chr 13:1–15:29",
++      "nt": "Jn 8:21–39",
++      "ps": "67:1–7",
++      "prv": "13:19–20"
++    },
++    {
++      "day": 147,
++      "date": "05-27",
++      "ot": "1 Chr 16:1–17:27",
++      "nt": "Jn 8:40–59",
++      "ps": "68:1–7",
++      "prv": "13:21–22"
++    },
++    {
++      "day": 148,
++      "date": "05-28",
++      "ot": "1 Chr 18:1–21:30",
++      "nt": "Jn 9:1–20",
++      "ps": "68:8–14",
++      "prv": "13:23–25"
++    },
++    {
++      "day": 149,
++      "date": "05-29",
++      "ot": "1 Chr 22:1–24:31",
++      "nt": "Jn 9:21–41",
++      "ps": "68:15–21",
++      "prv": "14:1–2"
++    },
++    {
++      "day": 150,
++      "date": "05-30",
++      "ot": "1 Chr 25:1–26:32",
++      "nt": "Jn 10:1–21",
++      "ps": "68:22–28",
++      "prv": "14:3–5"
++    },
++    {
++      "day": 151,
++      "date": "05-31",
++      "ot": "1 Chr 27:1–29:30",
++      "nt": "Jn 10:22–42",
++      "ps": "68:29–35",
++      "prv": "14:6–8"
++    },
++    {
++      "day": 152,
++      "date": "06-01",
++      "ot": "2 Chr 1:1–4:22",
++      "nt": "Jn 11:1–28",
++      "ps": "69:1–7",
++      "prv": "14:9–10"
++    },
++    {
++      "day": 153,
++      "date": "06-02",
++      "ot": "2 Chr 5:1–7:22",
++      "nt": "Jn 11:29–57",
++      "ps": "69:8–14",
++      "prv": "14:11–12"
++    },
++    {
++      "day": 154,
++      "date": "06-03",
++      "ot": "2 Chr 8:1–10:19",
++      "nt": "Jn 12:1–25",
++      "ps": "69:15–22",
++      "prv": "14:13–15"
++    },
++    {
++      "day": 155,
++      "date": "06-04",
++      "ot": "2 Chr 11:1–14:15",
++      "nt": "Jn 12:26–50",
++      "ps": "69:23–29",
++      "prv": "14:16–18"
++    },
++    {
++      "day": 156,
++      "date": "06-05",
++      "ot": "2 Chr 15:1–18:34",
++      "nt": "Jn 13:1–19",
++      "ps": "69:30–36",
++      "prv": "14:19–20"
++    },
++    {
++      "day": 157,
++      "date": "06-06",
++      "ot": "2 Chr 19:1–22:12",
++      "nt": "Jn 13:20–38",
++      "ps": "70:1–5",
++      "prv": "14:21–22"
++    },
++    {
++      "day": 158,
++      "date": "06-07",
++      "ot": "2 Chr 23:1–25:28",
++      "nt": "Jn 14:1–31",
++      "ps": "71:1–8",
++      "prv": "14:23–25"
++    },
++    {
++      "day": 159,
++      "date": "06-08",
++      "ot": "2 Chr 26:1–28:27",
++      "nt": "Jn 15:1–27",
++      "ps": "71:9–16",
++      "prv": "14:26–28"
++    },
++    {
++      "day": 160,
++      "date": "06-09",
++      "ot": "2 Chr 29:1–30:27",
++      "nt": "Jn 16:1–16",
++      "ps": "71:17–24",
++      "prv": "14:29–30"
++    },
++    {
++      "day": 161,
++      "date": "06-10",
++      "ot": "2 Chr 31:1–33:25",
++      "nt": "Jn 16:17–33",
++      "ps": "72:1–7",
++      "prv": "14:31–32"
++    },
++    {
++      "day": 162,
++      "date": "06-11",
++      "ot": "2 Chr 34:1–36:23",
++      "nt": "Jn 17:1–26",
++      "ps": "72:8–13",
++      "prv": "14:33–35"
++    },
++    {
++      "day": 163,
++      "date": "06-12",
++      "ot": "Ezr 1:1–2:70",
++      "nt": "Jn 18:1–20",
++      "ps": "72:14–20",
++      "prv": "15:1–3"
++    },
++    {
++      "day": 164,
++      "date": "06-13",
++      "ot": "Ezr 3:1–6:22",
++      "nt": "Jn 18:21–40",
++      "ps": "73:1–7",
++      "prv": "15:4–5"
++    },
++    {
++      "day": 165,
++      "date": "06-14",
++      "ot": "Ezr 7:1–8:36",
++      "nt": "Jn 19:1–21",
++      "ps": "73:8–14",
++      "prv": "15:6–8"
++    },
++    {
++      "day": 166,
++      "date": "06-15",
++      "ot": "Ezr 9:1–10:44",
++      "nt": "Jn 19:22–42",
++      "ps": "73:15–21",
++      "prv": "15:9–10"
++    },
++    {
++      "day": 167,
++      "date": "06-16",
++      "ot": "Neh 1:1–3:32",
++      "nt": "Jn 20:1–31",
++      "ps": "73:22–28",
++      "prv": "15:11–13"
++    },
++    {
++      "day": 168,
++      "date": "06-17",
++      "ot": "Neh 4:1–6:19",
++      "nt": "Jn 21:1–25",
++      "ps": "74:1–8",
++      "prv": "15:14–15"
++    },
++    {
++      "day": 169,
++      "date": "06-18",
++      "ot": "Neh 7:1–73",
++      "nt": "Acts 1:1–26",
++      "ps": "74:9–15",
++      "prv": "15:16–18"
++    },
++    {
++      "day": 170,
++      "date": "06-19",
++      "ot": "Neh 8:1–9:38",
++      "nt": "Acts 2:1–24",
++      "ps": "74:16–23",
++      "prv": "15:19–20"
++    },
++    {
++      "day": 171,
++      "date": "06-20",
++      "ot": "Neh 10:1–11:36",
++      "nt": "Acts 2:25–47",
++      "ps": "75:1–5",
++      "prv": "15:21–23"
++    },
++    {
++      "day": 172,
++      "date": "06-21",
++      "ot": "Neh 12:1–13:31",
++      "nt": "Acts 3:1–26",
++      "ps": "75:6–10",
++      "prv": "15:24–25"
++    },
++    {
++      "day": 173,
++      "date": "06-22",
++      "ot": "Est 1:1–4:17",
++      "nt": "Acts 4:1–18",
++      "ps": "76:1–6",
++      "prv": "15:26–28"
++    },
++    {
++      "day": 174,
++      "date": "06-23",
++      "ot": "Est 5:1–10:3",
++      "nt": "Acts 4:19–37",
++      "ps": "76:7–12",
++      "prv": "15:29–30"
++    },
++    {
++      "day": 175,
++      "date": "06-24",
++      "ot": "Jb 1:1–4:21",
++      "nt": "Acts 5:1–21",
++      "ps": "77:1–7",
++      "prv": "15:31–33"
++    },
++    {
++      "day": 176,
++      "date": "06-25",
++      "ot": "Jb 5:1–7:21",
++      "nt": "Acts 5:22–42",
++      "ps": "77:8–13",
++      "prv": "16:1–3"
++    },
++    {
++      "day": 177,
++      "date": "06-26",
++      "ot": "Jb 8:1–10:22",
++      "nt": "Acts 6:1–15",
++      "ps": "77:14–20",
++      "prv": "16:4–5"
++    },
++    {
++      "day": 178,
++      "date": "06-27",
++      "ot": "Jb 11:1–13:28",
++      "nt": "Acts 7:1–20",
++      "ps": "78:1–7",
++      "prv": "16:6–8"
++    },
++    {
++      "day": 179,
++      "date": "06-28",
++      "ot": "Jb 14:1–16:22",
++      "nt": "Acts 7:21–40",
++      "ps": "78:8–14",
++      "prv": "16:9–10"
++    },
++    {
++      "day": 180,
++      "date": "06-29",
++      "ot": "Jb 17:1–20:29",
++      "nt": "Acts 7:41–60",
++      "ps": "78:15–22",
++      "prv": "16:11–13"
++    },
++    {
++      "day": 181,
++      "date": "06-30",
++      "ot": "Jb 21:1–23:17",
++      "nt": "Acts 8:1–20",
++      "ps": "78:23–29",
++      "prv": "16:14–15"
++    },
++    {
++      "day": 182,
++      "date": "07-01",
++      "ot": "Jb 24:1–27:23",
++      "nt": "Acts 8:21–40",
++      "ps": "78:30–36",
++      "prv": "16:16–18"
++    },
++    {
++      "day": 183,
++      "date": "07-02",
++      "ot": "Jb 28:1–30:31",
++      "nt": "Acts 9:1–22",
++      "ps": "78:37–43",
++      "prv": "16:19–20"
++    },
++    {
++      "day": 184,
++      "date": "07-03",
++      "ot": "Jb 31:1–32:22",
++      "nt": "Acts 9:23–43",
++      "ps": "78:44–50",
++      "prv": "16:21–23"
++    },
++    {
++      "day": 185,
++      "date": "07-04",
++      "ot": "Jb 33:1–34:37",
++      "nt": "Acts 10:1–24",
++      "ps": "78:51–58",
++      "prv": "16:24–25"
++    },
++    {
++      "day": 186,
++      "date": "07-05",
++      "ot": "Jb 35:1–37:24",
++      "nt": "Acts 10:25–48",
++      "ps": "78:59–65",
++      "prv": "16:26–28"
++    },
++    {
++      "day": 187,
++      "date": "07-06",
++      "ot": "Jb 38:1–39:30",
++      "nt": "Acts 11:1–30",
++      "ps": "78:66–72",
++      "prv": "16:29–30"
++    },
++    {
++      "day": 188,
++      "date": "07-07",
++      "ot": "Jb 40:1–42:17",
++      "nt": "Acts 12:1–25",
++      "ps": "79:1–6",
++      "prv": "16:31–33"
++    },
++    {
++      "day": 189,
++      "date": "07-08",
++      "ot": "Eccl 1:1–3:22",
++      "nt": "Acts 13:1–26",
++      "ps": "79:7–13",
++      "prv": "17:1–3"
++    },
++    {
++      "day": 190,
++      "date": "07-09",
++      "ot": "Eccl 4:1–7:29",
++      "nt": "Acts 13:27–52",
++      "ps": "80:1–6",
++      "prv": "17:4–5"
++    },
++    {
++      "day": 191,
++      "date": "07-10",
++      "ot": "Eccl 8:1–12:14",
++      "nt": "Acts 14:1–28",
++      "ps": "80:7–13",
++      "prv": "17:6–8"
++    },
++    {
++      "day": 192,
++      "date": "07-11",
++      "ot": "Sg 1:1–4:16",
++      "nt": "Acts 15:1–20",
++      "ps": "80:14–19",
++      "prv": "17:9–10"
++    },
++    {
++      "day": 193,
++      "date": "07-12",
++      "ot": "Sg 5:1–8:14",
++      "nt": "Acts 15:21–41",
++      "ps": "81:1–8",
++      "prv": "17:11–13"
++    },
++    {
++      "day": 194,
++      "date": "07-13",
++      "ot": "Is 1:1–3:26",
++      "nt": "Acts 16:1–20",
++      "ps": "81:9–16",
++      "prv": "17:14–15"
++    },
++    {
++      "day": 195,
++      "date": "07-14",
++      "ot": "Is 4:1–7:25",
++      "nt": "Acts 16:21–40",
++      "ps": "82:1–8",
++      "prv": "17:16–18"
++    },
++    {
++      "day": 196,
++      "date": "07-15",
++      "ot": "Is 8:1–10:34",
++      "nt": "Acts 17:1–17",
++      "ps": "83:1–6",
++      "prv": "17:19–20"
++    },
++    {
++      "day": 197,
++      "date": "07-16",
++      "ot": "Is 11:1–14:32",
++      "nt": "Acts 17:18–34",
++      "ps": "83:7–12",
++      "prv": "17:21–23"
++    },
++    {
++      "day": 198,
++      "date": "07-17",
++      "ot": "Is 15:1–19:25",
++      "nt": "Acts 18:1–28",
++      "ps": "83:13–18",
++      "prv": "17:24–25"
++    },
++    {
++      "day": 199,
++      "date": "07-18",
++      "ot": "Is 20:1–23:18",
++      "nt": "Acts 19:1–20",
++      "ps": "84:1–6",
++      "prv": "17:26–28"
++    },
++    {
++      "day": 200,
++      "date": "07-19",
++      "ot": "Is 24:1–27:13",
++      "nt": "Acts 19:21–41",
++      "ps": "84:7–12",
++      "prv": "18:1–2"
++    },
++    {
++      "day": 201,
++      "date": "07-20",
++      "ot": "Is 28:1–30:33",
++      "nt": "Acts 20:1–19",
++      "ps": "85:1–6",
++      "prv": "18:3–5"
++    },
++    {
++      "day": 202,
++      "date": "07-21",
++      "ot": "Is 31:1–34:17",
++      "nt": "Acts 20:20–38",
++      "ps": "85:7–13",
++      "prv": "18:6–7"
++    },
++    {
++      "day": 203,
++      "date": "07-22",
++      "ot": "Is 35:1–37:38",
++      "nt": "Acts 21:1–20",
++      "ps": "86:1–8",
++      "prv": "18:8–10"
++    },
++    {
++      "day": 204,
++      "date": "07-23",
++      "ot": "Is 38:1–40:31",
++      "nt": "Acts 21:21–40",
++      "ps": "86:9–17",
++      "prv": "18:11–12"
++    },
++    {
++      "day": 205,
++      "date": "07-24",
++      "ot": "Is 41:1–43:28",
++      "nt": "Acts 22:1–30",
++      "ps": "87:1–7",
++      "prv": "18:13–14"
++    },
++    {
++      "day": 206,
++      "date": "07-25",
++      "ot": "Is 44:1–46:13",
++      "nt": "Acts 23:1–18",
++      "ps": "88:1–6",
++      "prv": "18:15–17"
++    },
++    {
++      "day": 207,
++      "date": "07-26",
++      "ot": "Is 47:1–50:11",
++      "nt": "Acts 23:19–35",
++      "ps": "88:7–12",
++      "prv": "18:18–19"
++    },
++    {
++      "day": 208,
++      "date": "07-27",
++      "ot": "Is 51:1–55:13",
++      "nt": "Acts 24:1–27",
++      "ps": "88:13–18",
++      "prv": "18:20–22"
++    },
++    {
++      "day": 209,
++      "date": "07-28",
++      "ot": "Is 56:1–59:21",
++      "nt": "Acts 25:1–27",
++      "ps": "89:1–6",
++      "prv": "18:23–24"
++    },
++    {
++      "day": 210,
++      "date": "07-29",
++      "ot": "Is 60:1–63:19",
++      "nt": "Acts 26:1–32",
++      "ps": "89:7–13",
++      "prv": "19:1–2"
++    },
++    {
++      "day": 211,
++      "date": "07-30",
++      "ot": "Is 64:1–66:24",
++      "nt": "Acts 27:1–22",
++      "ps": "89:14–20",
++      "prv": "19:3–5"
++    },
++    {
++      "day": 212,
++      "date": "07-31",
++      "ot": "Jer 1:1–3:25",
++      "nt": "Acts 27:23–44",
++      "ps": "89:21–26",
++      "prv": "19:6–7"
++    },
++    {
++      "day": 213,
++      "date": "08-01",
++      "ot": "Jer 4:1–5:31",
++      "nt": "Acts 28:1–31",
++      "ps": "89:27–32",
++      "prv": "19:8–10"
++    },
++    {
++      "day": 214,
++      "date": "08-02",
++      "ot": "Jer 6:1–8:22",
++      "nt": "Rom 1:1–32",
++      "ps": "89:33–39",
++      "prv": "19:11–12"
++    },
++    {
++      "day": 215,
++      "date": "08-03",
++      "ot": "Jer 9:1–11:23",
++      "nt": "Rom 2:1–29",
++      "ps": "89:40–46",
++      "prv": "19:13–14"
++    },
++    {
++      "day": 216,
++      "date": "08-04",
++      "ot": "Jer 12:1–14:22",
++      "nt": "Rom 3:1–31",
++      "ps": "89:47–52",
++      "prv": "19:15–17"
++    },
++    {
++      "day": 217,
++      "date": "08-05",
++      "ot": "Jer 15:1–17:27",
++      "nt": "Rom 4:1–25",
++      "ps": "90:1–8",
++      "prv": "19:18–19"
++    },
++    {
++      "day": 218,
++      "date": "08-06",
++      "ot": "Jer 18:1–21:14",
++      "nt": "Rom 5:1–21",
++      "ps": "90:9–17",
++      "prv": "19:20–22"
++    },
++    {
++      "day": 219,
++      "date": "08-07",
++      "ot": "Jer 22:1–23:40",
++      "nt": "Rom 6:1–23",
++      "ps": "91:1–8",
++      "prv": "19:23–24"
++    },
++    {
++      "day": 220,
++      "date": "08-08",
++      "ot": "Jer 24:1–26:24",
++      "nt": "Rom 7:1–25",
++      "ps": "91:9–16",
++      "prv": "19:25–27"
++    },
++    {
++      "day": 221,
++      "date": "08-09",
++      "ot": "Jer 27:1–29:32",
++      "nt": "Rom 8:1–20",
++      "ps": "92:1–8",
++      "prv": "19:28–29"
++    },
++    {
++      "day": 222,
++      "date": "08-10",
++      "ot": "Jer 30:1–31:40",
++      "nt": "Rom 8:21–39",
++      "ps": "92:9–15",
++      "prv": "20:1–2"
++    },
++    {
++      "day": 223,
++      "date": "08-11",
++      "ot": "Jer 32:1–33:26",
++      "nt": "Rom 9:1–33",
++      "ps": "93:1–5",
++      "prv": "20:3–5"
++    },
++    {
++      "day": 224,
++      "date": "08-12",
++      "ot": "Jer 34:1–36:32",
++      "nt": "Rom 10:1–21",
++      "ps": "94:1–8",
++      "prv": "20:6–8"
++    },
++    {
++      "day": 225,
++      "date": "08-13",
++      "ot": "Jer 37:1–40:16",
++      "nt": "Rom 11:1–18",
++      "ps": "94:9–15",
++      "prv": "20:9–10"
++    },
++    {
++      "day": 226,
++      "date": "08-14",
++      "ot": "Jer 41:1–44:30",
++      "nt": "Rom 11:19–36",
++      "ps": "94:16–23",
++      "prv": "20:11–12"
++    },
++    {
++      "day": 227,
++      "date": "08-15",
++      "ot": "Jer 45:1–48:47",
++      "nt": "Rom 12:1–21",
++      "ps": "95:1–6",
++      "prv": "20:13–15"
++    },
++    {
++      "day": 228,
++      "date": "08-16",
++      "ot": "Jer 49:1–50:46",
++      "nt": "Rom 13:1–14",
++      "ps": "95:7–11",
++      "prv": "20:16–18"
++    },
++    {
++      "day": 229,
++      "date": "08-17",
++      "ot": "Jer 51:1–52:34",
++      "nt": "Rom 14:1–23",
++      "ps": "96:1–6",
++      "prv": "20:19–20"
++    },
++    {
++      "day": 230,
++      "date": "08-18",
++      "ot": "Lam 1:1–2:22",
++      "nt": "Rom 15:1–33",
++      "ps": "96:7–13",
++      "prv": "20:21–22"
++    },
++    {
++      "day": 231,
++      "date": "08-19",
++      "ot": "Lam 3:1–5:22",
++      "nt": "Rom 16:1–27",
++      "ps": "97:1–6",
++      "prv": "20:23–25"
++    },
++    {
++      "day": 232,
++      "date": "08-20",
++      "ot": "Ez 1:1–3:27",
++      "nt": "1 Cor 1:1–31",
++      "ps": "97:7–12",
++      "prv": "20:26–28"
++    },
++    {
++      "day": 233,
++      "date": "08-21",
++      "ot": "Ez 4:1–7:27",
++      "nt": "1 Cor 2:1–16",
++      "ps": "98:1–9",
++      "prv": "20:29–30"
++    },
++    {
++      "day": 234,
++      "date": "08-22",
++      "ot": "Ez 8:1–11:25",
++      "nt": "1 Cor 3:1–23",
++      "ps": "99:1–9",
++      "prv": "21:1–3"
++    },
++    {
++      "day": 235,
++      "date": "08-23",
++      "ot": "Ez 12:1–14:23",
++      "nt": "1 Cor 4:1–21",
++      "ps": "100:1–5",
++      "prv": "21:4–5"
++    },
++    {
++      "day": 236,
++      "date": "08-24",
++      "ot": "Ez 15:1–16:63",
++      "nt": "1 Cor 5:1–13",
++      "ps": "101:1–8",
++      "prv": "21:6–8"
++    },
++    {
++      "day": 237,
++      "date": "08-25",
++      "ot": "Ez 17:1–19:14",
++      "nt": "1 Cor 6:1–20",
++      "ps": "102:1–7",
++      "prv": "21:9–10"
++    },
++    {
++      "day": 238,
++      "date": "08-26",
++      "ot": "Ez 20:1–21:32",
++      "nt": "1 Cor 7:1–20",
++      "ps": "102:8–14",
++      "prv": "21:11–13"
++    },
++    {
++      "day": 239,
++      "date": "08-27",
++      "ot": "Ez 22:1–23:49",
++      "nt": "1 Cor 7:21–40",
++      "ps": "102:15–21",
++      "prv": "21:14–16"
++    },
++    {
++      "day": 240,
++      "date": "08-28",
++      "ot": "Ez 24:1–26:21",
++      "nt": "1 Cor 8:1–13",
++      "ps": "102:22–28",
++      "prv": "21:17–18"
++    },
++    {
++      "day": 241,
++      "date": "08-29",
++      "ot": "Ez 27:1–29:21",
++      "nt": "1 Cor 9:1–27",
++      "ps": "103:1–7",
++      "prv": "21:19–21"
++    },
++    {
++      "day": 242,
++      "date": "08-30",
++      "ot": "Ez 30:1–32:32",
++      "nt": "1 Cor 10:1–33",
++      "ps": "103:8–15",
++      "prv": "21:22–23"
++    },
++    {
++      "day": 243,
++      "date": "08-31",
++      "ot": "Ez 33:1–35:15",
++      "nt": "1 Cor 11:1–17",
++      "ps": "103:16–22",
++      "prv": "21:24–26"
++    },
++    {
++      "day": 244,
++      "date": "09-01",
++      "ot": "Ez 36:1–38:23",
++      "nt": "1 Cor 11:18–34",
++      "ps": "104:1–7",
++      "prv": "21:27–28"
++    },
++    {
++      "day": 245,
++      "date": "09-02",
++      "ot": "Ez 39:1–40:49",
++      "nt": "1 Cor 12:1–31",
++      "ps": "104:8–14",
++      "prv": "21:29–31"
++    },
++    {
++      "day": 246,
++      "date": "09-03",
++      "ot": "Ez 41:1–43:27",
++      "nt": "1 Cor 13:1–13",
++      "ps": "104:15–21",
++      "prv": "22:1–2"
++    },
++    {
++      "day": 247,
++      "date": "09-04",
++      "ot": "Ez 44:1–46:24",
++      "nt": "1 Cor 14:1–20",
++      "ps": "104:22–28",
++      "prv": "22:3–5"
++    },
++    {
++      "day": 248,
++      "date": "09-05",
++      "ot": "Ez 47:1–48:35",
++      "nt": "1 Cor 14:21–40",
++      "ps": "104:29–35",
++      "prv": "22:6–7"
++    },
++    {
++      "day": 249,
++      "date": "09-06",
++      "ot": "Dn 1:1–2:49",
++      "nt": "1 Cor 15:1–19",
++      "ps": "105:1–6",
++      "prv": "22:8–10"
++    },
++    {
++      "day": 250,
++      "date": "09-07",
++      "ot": "Dn 3:1–4:37",
++      "nt": "1 Cor 15:20–39",
++      "ps": "105:7–13",
++      "prv": "22:11–12"
++    },
++    {
++      "day": 251,
++      "date": "09-08",
++      "ot": "Dn 5:1–6:28",
++      "nt": "1 Cor 15:40–58",
++      "ps": "105:14–19",
++      "prv": "22:13–14"
++    },
++    {
++      "day": 252,
++      "date": "09-09",
++      "ot": "Dn 7:1–9:27",
++      "nt": "1 Cor 16:1–24",
++      "ps": "105:20–26",
++      "prv": "22:15–17"
++    },
++    {
++      "day": 253,
++      "date": "09-10",
++      "ot": "Dn 10:1–12:13",
++      "nt": "2 Cor 1:1–24",
++      "ps": "105:27–32",
++      "prv": "22:18–19"
++    },
++    {
++      "day": 254,
++      "date": "09-11",
++      "ot": "Hos 1:1–4:19",
++      "nt": "2 Cor 2:1–17",
++      "ps": "105:33–39",
++      "prv": "22:20–22"
++    },
++    {
++      "day": 255,
++      "date": "09-12",
++      "ot": "Hos 5:1–9:17",
++      "nt": "2 Cor 3:1–18",
++      "ps": "105:40–45",
++      "prv": "22:23–24"
++    },
++    {
++      "day": 256,
++      "date": "09-13",
++      "ot": "Hos 10:1–14:9",
++      "nt": "2 Cor 4:1–18",
++      "ps": "106:1–7",
++      "prv": "22:25–27"
++    },
++    {
++      "day": 257,
++      "date": "09-14",
++      "ot": "Jl 1:1–3:21",
++      "nt": "2 Cor 5:1–21",
++      "ps": "106:8–14",
++      "prv": "22:28–29"
++    },
++    {
++      "day": 258,
++      "date": "09-15",
++      "ot": "Am 1:1–5:27",
++      "nt": "2 Cor 6:1–18",
++      "ps": "106:15–21",
++      "prv": "23:1–2"
++    },
++    {
++      "day": 259,
++      "date": "09-16",
++      "ot": "Am 6:1–9:15",
++      "nt": "2 Cor 7:1–16",
++      "ps": "106:22–27",
++      "prv": "23:3–5"
++    },
++    {
++      "day": 260,
++      "date": "09-17",
++      "ot": "Ob 1:1–21",
++      "nt": "2 Cor 8:1–24",
++      "ps": "106:28–34",
++      "prv": "23:6–8"
++    },
++    {
++      "day": 261,
++      "date": "09-18",
++      "ot": "Jon 1:1–4:11",
++      "nt": "2 Cor 9:1–15",
++      "ps": "106:35–41",
++      "prv": "23:9–10"
++    },
++    {
++      "day": 262,
++      "date": "09-19",
++      "ot": "Mi 1:1–4:13",
++      "nt": "2 Cor 10:1–18",
++      "ps": "106:42–48",
++      "prv": "23:11–12"
++    },
++    {
++      "day": 263,
++      "date": "09-20",
++      "ot": "Mi 5:1–7:20",
++      "nt": "2 Cor 11:1–33",
++      "ps": "107:1–7",
++      "prv": "23:13–15"
++    },
++    {
++      "day": 264,
++      "date": "09-21",
++      "ot": "Na 1:1–3:19",
++      "nt": "2 Cor 12:1–21",
++      "ps": "107:8–14",
++      "prv": "23:16–18"
++    },
++    {
++      "day": 265,
++      "date": "09-22",
++      "ot": "Hb 1:1–3:19",
++      "nt": "2 Cor 13:1–14",
++      "ps": "107:15–22",
++      "prv": "23:19–20"
++    },
++    {
++      "day": 266,
++      "date": "09-23",
++      "ot": "Zep 1:1–3:20",
++      "nt": "Gal 1:1–24",
++      "ps": "107:23–29",
++      "prv": "23:21–22"
++    },
++    {
++      "day": 267,
++      "date": "09-24",
++      "ot": "Hg 1:1–2:23",
++      "nt": "Gal 2:1–21",
++      "ps": "107:30–36",
++      "prv": "23:23–25"
++    },
++    {
++      "day": 268,
++      "date": "09-25",
++      "ot": "Zec 1:1–5:11",
++      "nt": "Gal 3:1–29",
++      "ps": "107:37–43",
++      "prv": "23:26–28"
++    },
++    {
++      "day": 269,
++      "date": "09-26",
++      "ot": "Zec 6:1–9:17",
++      "nt": "Gal 4:1–31",
++      "ps": "108:1–6",
++      "prv": "23:29–30"
++    },
++    {
++      "day": 270,
++      "date": "09-27",
++      "ot": "Zec 10:1–14:21",
++      "nt": "Gal 5:1–26",
++      "ps": "108:7–13",
++      "prv": "23:31–32"
++    },
++    {
++      "day": 271,
++      "date": "09-28",
++      "ot": "Mal 1:1–4:6",
++      "nt": "Gal 6:1–18",
++      "ps": "109:1–8",
++      "prv": "23:33–35"
++    },
++    {
++      "day": 272,
++      "date": "09-29",
++      "ot": "Tob 1:1–4:21",
++      "nt": "Eph 1:1–23",
++      "ps": "109:9–16",
++      "prv": "24:1–2"
++    },
++    {
++      "day": 273,
++      "date": "09-30",
++      "ot": "Tob 5:1–9:6",
++      "nt": "Eph 2:1–22",
++      "ps": "109:17–23",
++      "prv": "24:3–5"
++    },
++    {
++      "day": 274,
++      "date": "10-01",
++      "ot": "Tob 10:1–14:15",
++      "nt": "Eph 3:1–21",
++      "ps": "109:24–31",
++      "prv": "24:6–7"
++    },
++    {
++      "day": 275,
++      "date": "10-02",
++      "ot": "Jdt 1:1–4:15",
++      "nt": "Eph 4:1–32",
++      "ps": "110:1–7",
++      "prv": "24:8–10"
++    },
++    {
++      "day": 276,
++      "date": "10-03",
++      "ot": "Jdt 5:1–7:32",
++      "nt": "Eph 5:1–33",
++      "ps": "111:1–5",
++      "prv": "24:11–12"
++    },
++    {
++      "day": 277,
++      "date": "10-04",
++      "ot": "Jdt 8:1–10:23",
++      "nt": "Eph 6:1–24",
++      "ps": "111:6–10",
++      "prv": "24:13–15"
++    },
++    {
++      "day": 278,
++      "date": "10-05",
++      "ot": "Jdt 11:1–13:20",
++      "nt": "Phil 1:1–30",
++      "ps": "112:1–5",
++      "prv": "24:16–17"
++    },
++    {
++      "day": 279,
++      "date": "10-06",
++      "ot": "Jdt 14:1–16:25",
++      "nt": "Phil 2:1–30",
++      "ps": "112:6–10",
++      "prv": "24:18–19"
++    },
++    {
++      "day": 280,
++      "date": "10-07",
++      "ot": "Gk Est 11:2–12:6; 1:1–2:23",
++      "nt": "Phil 3:1–21",
++      "ps": "113:1–9",
++      "prv": "24:20–22"
++    },
++    {
++      "day": 281,
++      "date": "10-08",
++      "ot": "Gk Est 3:1–13; 13:1–7; 3:14–4:17; 13:8–14:19",
++      "nt": "Phil 4:1–23",
++      "ps": "114:1–8",
++      "prv": "24:23–24"
++    },
++    {
++      "day": 282,
++      "date": "10-09",
++      "ot": "Gk Est 15:1–16; 5:3–7:10",
++      "nt": "Col 1:1–29",
++      "ps": "115:1–6",
++      "prv": "24:25–27"
++    },
++    {
++      "day": 283,
++      "date": "10-10",
++      "ot": "Gk Est 8:1–12; 16:1–24; 8:13–11:1",
++      "nt": "Col 2:1–23",
++      "ps": "115:7–12",
++      "prv": "24:28–29"
++    },
++    {
++      "day": 284,
++      "date": "10-11",
++      "ot": "Wis 1:1–4:20",
++      "nt": "Col 3:1–25",
++      "ps": "115:13–18",
++      "prv": "24:30–32"
++    },
++    {
++      "day": 285,
++      "date": "10-12",
++      "ot": "Wis 5:1–7:30",
++      "nt": "Col 4:1–18",
++      "ps": "116:1–6",
++      "prv": "24:33–34"
++    },
++    {
++      "day": 286,
++      "date": "10-13",
++      "ot": "Wis 8:1–10:21",
++      "nt": "1 Thes 1:1–10",
++      "ps": "116:7–13",
++      "prv": "25:1–3"
++    },
++    {
++      "day": 287,
++      "date": "10-14",
++      "ot": "Wis 11:1–13:19",
++      "nt": "1 Thes 2:1–20",
++      "ps": "116:14–19",
++      "prv": "25:4–5"
++    },
++    {
++      "day": 288,
++      "date": "10-15",
++      "ot": "Wis 14:1–16:29",
++      "nt": "1 Thes 3:1–13",
++      "ps": "117:1–2",
++      "prv": "25:6–8"
++    },
++    {
++      "day": 289,
++      "date": "10-16",
++      "ot": "Wis 17:1–19:22",
++      "nt": "1 Thes 4:1–18",
++      "ps": "118:1–7",
++      "prv": "25:9–10"
++    },
++    {
++      "day": 290,
++      "date": "10-17",
++      "ot": "Sir Prologue; 1:1–3:31",
++      "nt": "1 Thes 5:1–28",
++      "ps": "118:8–14",
++      "prv": "25:11–13",
++      "notes": [
++        "Read the unnumbered Prologue to Sirach before chapter 1."
++      ]
++    },
++    {
++      "day": 291,
++      "date": "10-18",
++      "ot": "Sir 4:1–6:37",
++      "nt": "2 Thes 1:1–12",
++      "ps": "118:15–22",
++      "prv": "25:14–15"
++    },
++    {
++      "day": 292,
++      "date": "10-19",
++      "ot": "Sir 7:1–9:18",
++      "nt": "2 Thes 2:1–17",
++      "ps": "118:23–29",
++      "prv": "25:16–18"
++    },
++    {
++      "day": 293,
++      "date": "10-20",
++      "ot": "Sir 10:1–11:34",
++      "nt": "2 Thes 3:1–18",
++      "ps": "119:1–8",
++      "prv": "25:19–20"
++    },
++    {
++      "day": 294,
++      "date": "10-21",
++      "ot": "Sir 12:1–14:27",
++      "nt": "1 Tim 1:1–20",
++      "ps": "119:9–16",
++      "prv": "25:21–23"
++    },
++    {
++      "day": 295,
++      "date": "10-22",
++      "ot": "Sir 15:1–17:32",
++      "nt": "1 Tim 2:1–15",
++      "ps": "119:17–24",
++      "prv": "25:24–25"
++    },
++    {
++      "day": 296,
++      "date": "10-23",
++      "ot": "Sir 18:1–19:30",
++      "nt": "1 Tim 3:1–16",
++      "ps": "119:25–32",
++      "prv": "25:26–28"
++    },
++    {
++      "day": 297,
++      "date": "10-24",
++      "ot": "Sir 20:1–22:27",
++      "nt": "1 Tim 4:1–16",
++      "ps": "119:33–40",
++      "prv": "26:1–3"
++    },
++    {
++      "day": 298,
++      "date": "10-25",
++      "ot": "Sir 23:1–24:34",
++      "nt": "1 Tim 5:1–25",
++      "ps": "119:41–48",
++      "prv": "26:4–5"
++    },
++    {
++      "day": 299,
++      "date": "10-26",
++      "ot": "Sir 25:1–27:30",
++      "nt": "1 Tim 6:1–21",
++      "ps": "119:49–56",
++      "prv": "26:6–8"
++    },
++    {
++      "day": 300,
++      "date": "10-27",
++      "ot": "Sir 28:1–30:25",
++      "nt": "2 Tim 1:1–18",
++      "ps": "119:57–64",
++      "prv": "26:9–10"
++    },
++    {
++      "day": 301,
++      "date": "10-28",
++      "ot": "Sir 31:1–33:33",
++      "nt": "2 Tim 2:1–26",
++      "ps": "119:65–72",
++      "prv": "26:11–13"
++    },
++    {
++      "day": 302,
++      "date": "10-29",
++      "ot": "Sir 34:1–35:26",
++      "nt": "2 Tim 3:1–17",
++      "ps": "119:73–80",
++      "prv": "26:14–15"
++    },
++    {
++      "day": 303,
++      "date": "10-30",
++      "ot": "Sir 36:1–37:31",
++      "nt": "2 Tim 4:1–22",
++      "ps": "119:81–88",
++      "prv": "26:16–18"
++    },
++    {
++      "day": 304,
++      "date": "10-31",
++      "ot": "Sir 38:1–39:35",
++      "nt": "Titus 1:1–16",
++      "ps": "119:89–96",
++      "prv": "26:19–20"
++    },
++    {
++      "day": 305,
++      "date": "11-01",
++      "ot": "Sir 40:1–42:25",
++      "nt": "Titus 2:1–15",
++      "ps": "119:97–104",
++      "prv": "26:21–23"
++    },
++    {
++      "day": 306,
++      "date": "11-02",
++      "ot": "Sir 43:1–45:26",
++      "nt": "Titus 3:1–15",
++      "ps": "119:105–112",
++      "prv": "26:24–25"
++    },
++    {
++      "day": 307,
++      "date": "11-03",
++      "ot": "Sir 46:1–48:25",
++      "nt": "Phlm 1:1–25",
++      "ps": "119:113–120",
++      "prv": "26:26–28"
++    },
++    {
++      "day": 308,
++      "date": "11-04",
++      "ot": "Sir 49:1–51:30",
++      "nt": "Heb 1:1–14",
++      "ps": "119:121–128",
++      "prv": "27:1–2"
++    },
++    {
++      "day": 309,
++      "date": "11-05",
++      "ot": "Bar 1:1–2:35",
++      "nt": "Heb 2:1–18",
++      "ps": "119:129–136",
++      "prv": "27:3–5"
++    },
++    {
++      "day": 310,
++      "date": "11-06",
++      "ot": "Bar 3:1–5:9",
++      "nt": "Heb 3:1–19",
++      "ps": "119:137–144",
++      "prv": "27:6–7"
++    },
++    {
++      "day": 311,
++      "date": "11-07",
++      "ot": "Let Jer 1:1–73",
++      "nt": "Heb 4:1–16",
++      "ps": "119:145–152",
++      "prv": "27:8–10"
++    },
++    {
++      "day": 312,
++      "date": "11-08",
++      "ot": "Pr Azar 1:1–68",
++      "nt": "Heb 5:1–14",
++      "ps": "119:153–160",
++      "prv": "27:11–12"
++    },
++    {
++      "day": 313,
++      "date": "11-09",
++      "ot": "Sus 1:1–64",
++      "nt": "Heb 6:1–20",
++      "ps": "119:161–168",
++      "prv": "27:13–15"
++    },
++    {
++      "day": 314,
++      "date": "11-10",
++      "ot": "Bel 1:1–42",
++      "nt": "Heb 7:1–28",
++      "ps": "119:169–176",
++      "prv": "27:16–17"
++    },
++    {
++      "day": 315,
++      "date": "11-11",
++      "ot": "1 Macc 1:1–64",
++      "nt": "Heb 8:1–13",
++      "ps": "120:1–7",
++      "prv": "27:18–20"
++    },
++    {
++      "day": 316,
++      "date": "11-12",
++      "ot": "1 Macc 2:1–70",
++      "nt": "Heb 9:1–28",
++      "ps": "121:1–8",
++      "prv": "27:21–22"
++    },
++    {
++      "day": 317,
++      "date": "11-13",
++      "ot": "1 Macc 3:1–60",
++      "nt": "Heb 10:1–20",
++      "ps": "122:1–9",
++      "prv": "27:23–25"
++    },
++    {
++      "day": 318,
++      "date": "11-14",
++      "ot": "1 Macc 4:1–61",
++      "nt": "Heb 10:21–39",
++      "ps": "123:1–4",
++      "prv": "27:26–27"
++    },
++    {
++      "day": 319,
++      "date": "11-15",
++      "ot": "1 Macc 5:1–68",
++      "nt": "Heb 11:1–20",
++      "ps": "124:1–8",
++      "prv": "28:1–3"
++    },
++    {
++      "day": 320,
++      "date": "11-16",
++      "ot": "1 Macc 6:1–63",
++      "nt": "Heb 11:21–40",
++      "ps": "125:1–5",
++      "prv": "28:4–5"
++    },
++    {
++      "day": 321,
++      "date": "11-17",
++      "ot": "1 Macc 7:1–8:32",
++      "nt": "Heb 12:1–29",
++      "ps": "126:1–6",
++      "prv": "28:6–8"
++    },
++    {
++      "day": 322,
++      "date": "11-18",
++      "ot": "1 Macc 9:1–73",
++      "nt": "Heb 13:1–25",
++      "ps": "127:1–5",
++      "prv": "28:9–10"
++    },
++    {
++      "day": 323,
++      "date": "11-19",
++      "ot": "1 Macc 10:1–89",
++      "nt": "Jas 1:1–27",
++      "ps": "128:1–6",
++      "prv": "28:11–13"
++    },
++    {
++      "day": 324,
++      "date": "11-20",
++      "ot": "1 Macc 11:1–74",
++      "nt": "Jas 2:1–26",
++      "ps": "129:1–8",
++      "prv": "28:14–15"
++    },
++    {
++      "day": 325,
++      "date": "11-21",
++      "ot": "1 Macc 12:1–53",
++      "nt": "Jas 3:1–18",
++      "ps": "130:1–8",
++      "prv": "28:16–18"
++    },
++    {
++      "day": 326,
++      "date": "11-22",
++      "ot": "1 Macc 13:1–14:49",
++      "nt": "Jas 4:1–17",
++      "ps": "131:1–3",
++      "prv": "28:19–20"
++    },
++    {
++      "day": 327,
++      "date": "11-23",
++      "ot": "1 Macc 15:1–16:24",
++      "nt": "Jas 5:1–20",
++      "ps": "132:1–6",
++      "prv": "28:21–23"
++    },
++    {
++      "day": 328,
++      "date": "11-24",
++      "ot": "2 Macc 1:1–2:32",
++      "nt": "1 Pet 1:1–25",
++      "ps": "132:7–12",
++      "prv": "28:24–25"
++    },
++    {
++      "day": 329,
++      "date": "11-25",
++      "ot": "2 Macc 3:1–40",
++      "nt": "1 Pet 2:1–25",
++      "ps": "132:13–18",
++      "prv": "28:26–28"
++    },
++    {
++      "day": 330,
++      "date": "11-26",
++      "ot": "2 Macc 4:1–5:27",
++      "nt": "1 Pet 3:1–22",
++      "ps": "133:1–3",
++      "prv": "29:1–2"
++    },
++    {
++      "day": 331,
++      "date": "11-27",
++      "ot": "2 Macc 6:1–7:42",
++      "nt": "1 Pet 4:1–19",
++      "ps": "134:1–3",
++      "prv": "29:3–5"
++    },
++    {
++      "day": 332,
++      "date": "11-28",
++      "ot": "2 Macc 8:1–9:29",
++      "nt": "1 Pet 5:1–14",
++      "ps": "135:1–7",
++      "prv": "29:6–7"
++    },
++    {
++      "day": 333,
++      "date": "11-29",
++      "ot": "2 Macc 10:1–11:38",
++      "nt": "2 Pet 1:1–21",
++      "ps": "135:8–14",
++      "prv": "29:8–10"
++    },
++    {
++      "day": 334,
++      "date": "11-30",
++      "ot": "2 Macc 12:1–13:26",
++      "nt": "2 Pet 2:1–22",
++      "ps": "135:15–21",
++      "prv": "29:11–12"
++    },
++    {
++      "day": 335,
++      "date": "12-01",
++      "ot": "2 Macc 14:1–15:39",
++      "nt": "2 Pet 3:1–18",
++      "ps": "136:1–6",
++      "prv": "29:13–15"
++    },
++    {
++      "day": 336,
++      "date": "12-02",
++      "ot": "1 Esd 1:1–2:30",
++      "nt": "1 Jn 1:1–10",
++      "ps": "136:7–13",
++      "prv": "29:16–17"
++    },
++    {
++      "day": 337,
++      "date": "12-03",
++      "ot": "1 Esd 3:1–4:63",
++      "nt": "1 Jn 2:1–29",
++      "ps": "136:14–20",
++      "prv": "29:18–20"
++    },
++    {
++      "day": 338,
++      "date": "12-04",
++      "ot": "1 Esd 5:1–73",
++      "nt": "1 Jn 3:1–24",
++      "ps": "136:21–26",
++      "prv": "29:21–22"
++    },
++    {
++      "day": 339,
++      "date": "12-05",
++      "ot": "1 Esd 6:1–7:15",
++      "nt": "1 Jn 4:1–21",
++      "ps": "137:1–9",
++      "prv": "29:23–25"
++    },
++    {
++      "day": 340,
++      "date": "12-06",
++      "ot": "1 Esd 8:1–96",
++      "nt": "1 Jn 5:1–21",
++      "ps": "138:1–8",
++      "prv": "29:26–27"
++    },
++    {
++      "day": 341,
++      "date": "12-07",
++      "ot": "1 Esd 9:1–55",
++      "nt": "2 Jn 1:1–13",
++      "ps": "139:1–8",
++      "prv": "30:1–3"
++    },
++    {
++      "day": 342,
++      "date": "12-08",
++      "ot": "Pr Man 1:1–15",
++      "nt": "3 Jn 1:1–15",
++      "ps": "139:9–16",
++      "prv": "30:4–5"
++    },
++    {
++      "day": 343,
++      "date": "12-09",
++      "ot": "3 Macc 1:1–3:30",
++      "nt": "Jude 1:1–25",
++      "ps": "139:17–24",
++      "prv": "30:6–8"
++    },
++    {
++      "day": 344,
++      "date": "12-10",
++      "ot": "3 Macc 4:1–5:51",
++      "nt": "Rev 1:1–20",
++      "ps": "140:1–6",
++      "prv": "30:9–10"
++    },
++    {
++      "day": 345,
++      "date": "12-11",
++      "ot": "3 Macc 6:1–7:23",
++      "nt": "Rev 2:1–29",
++      "ps": "140:7–13",
++      "prv": "30:11–13"
++    },
++    {
++      "day": 346,
++      "date": "12-12",
++      "ot": "2 Esd 1:1–2:48",
++      "nt": "Rev 3:1–22",
++      "ps": "141:1–5",
++      "prv": "30:14–15"
++    },
++    {
++      "day": 347,
++      "date": "12-13",
++      "ot": "2 Esd 3:1–4:52",
++      "nt": "Rev 4:1–11",
++      "ps": "141:6–10",
++      "prv": "30:16–18"
++    },
++    {
++      "day": 348,
++      "date": "12-14",
++      "ot": "2 Esd 5:1–56",
++      "nt": "Rev 5:1–14",
++      "ps": "142:1–7",
++      "prv": "30:19–20"
++    },
++    {
++      "day": 349,
++      "date": "12-15",
++      "ot": "2 Esd 6:1–59",
++      "nt": "Rev 6:1–17",
++      "ps": "143:1–6",
++      "prv": "30:21–23"
++    },
++    {
++      "day": 350,
++      "date": "12-16",
++      "ot": "2 Esd 7:1–140",
++      "nt": "Rev 7:1–17",
++      "ps": "143:7–12",
++      "prv": "30:24–25"
++    },
++    {
++      "day": 351,
++      "date": "12-17",
++      "ot": "2 Esd 8:1–63",
++      "nt": "Rev 8:1–13",
++      "ps": "144:1–8",
++      "prv": "30:26–28"
++    },
++    {
++      "day": 352,
++      "date": "12-18",
++      "ot": "2 Esd 9:1–47",
++      "nt": "Rev 9:1–21",
++      "ps": "144:9–15",
++      "prv": "30:29–30"
++    },
++    {
++      "day": 353,
++      "date": "12-19",
++      "ot": "2 Esd 10:1–59",
++      "nt": "Rev 10:1–11",
++      "ps": "145:1–7",
++      "prv": "30:31–33"
++    },
++    {
++      "day": 354,
++      "date": "12-20",
++      "ot": "2 Esd 11:1–12:51",
++      "nt": "Rev 11:1–19",
++      "ps": "145:8–14",
++      "prv": "31:1–3"
++    },
++    {
++      "day": 355,
++      "date": "12-21",
++      "ot": "2 Esd 13:1–58",
++      "nt": "Rev 12:1–18",
++      "ps": "145:15–21",
++      "prv": "31:4–5"
++    },
++    {
++      "day": 356,
++      "date": "12-22",
++      "ot": "2 Esd 14:1–48",
++      "nt": "Rev 13:1–18",
++      "ps": "146:1–5",
++      "prv": "31:6–8"
++    },
++    {
++      "day": 357,
++      "date": "12-23",
++      "ot": "2 Esd 15:1–63",
++      "nt": "Rev 14:1–20",
++      "ps": "146:6–10",
++      "prv": "31:9–10"
++    },
++    {
++      "day": 358,
++      "date": "12-24",
++      "ot": "2 Esd 16:1–78",
++      "nt": "Rev 15:1–8",
++      "ps": "147:1–7",
++      "prv": "31:11–13"
++    },
++    {
++      "day": 359,
++      "date": "12-25",
++      "ot": "4 Macc 1:1–3:21",
++      "nt": "Rev 16:1–21",
++      "ps": "147:8–13",
++      "prv": "31:14–16"
++    },
++    {
++      "day": 360,
++      "date": "12-26",
++      "ot": "4 Macc 4:1–5:38",
++      "nt": "Rev 17:1–18",
++      "ps": "147:14–20",
++      "prv": "31:17–18"
++    },
++    {
++      "day": 361,
++      "date": "12-27",
++      "ot": "4 Macc 6:1–7:23",
++      "nt": "Rev 18:1–24",
++      "ps": "148:1–7",
++      "prv": "31:19–21"
++    },
++    {
++      "day": 362,
++      "date": "12-28",
++      "ot": "4 Macc 8:1–9:32",
++      "nt": "Rev 19:1–21",
++      "ps": "148:8–14",
++      "prv": "31:22–23"
++    },
++    {
++      "day": 363,
++      "date": "12-29",
++      "ot": "4 Macc 10:1–12:19",
++      "nt": "Rev 20:1–15",
++      "ps": "149:1–9",
++      "prv": "31:24–26"
++    },
++    {
++      "day": 364,
++      "date": "12-30",
++      "ot": "4 Macc 13:1–15:32",
++      "nt": "Rev 21:1–27",
++      "ps": "150:1–6",
++      "prv": "31:27–28"
++    },
++    {
++      "day": 365,
++      "date": "12-31",
++      "ot": "4 Macc 16:1–18:24",
++      "nt": "Rev 22:1–21",
++      "ps": "151:1–7",
++      "prv": "31:29–31",
++      "notes": [
++        "Psalm 151 is in the Apocrypha section of an NRSV with the full Apocrypha."
++      ]
++    }
++  ]
++}
+diff --git a/README.md b/README.md
+index f1acc5ad88d62ccd46f0e48810c8158530c8d657..264e26781813245896b18ec350b7d1e82c4fceb8 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,10 @@ Includes the customary Fatima prayer after each decade.
+ Evening pauses for thanksgiving and examination; tap `continue` when ready.
+ Each session saves its own place. Narration is next; no audio is bundled yet.
+ 
++Daily reading shows four references for your physical NRSV with full Apocrypha.
++The original 365-day plan is bundled offline and follows the local date.
++February 29 is for catching up. Sources and review notes are in the plan JSON.
++
+ ## Run
+ 
+ On macOS with Xcode and XcodeGen:
+diff --git a/Tests/DailyReadingPlanTests.swift b/Tests/DailyReadingPlanTests.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8d980075b749569012f747e6fbe0c1ed15fd861
+--- /dev/null
++++ b/Tests/DailyReadingPlanTests.swift
+@@ -0,0 +1,111 @@
++import XCTest
++@testable import daily
++
++final class DailyReadingPlanTests: XCTestCase {
++    private let utc = TimeZone(secondsFromGMT: 0)!
++
++    private func instant(_ text: String) -> Date {
++        ISO8601DateFormatter().date(from: text)!
++    }
++
++    private func reading(_ plan: DailyReadingPlan, at date: Date,
++                         zone: TimeZone) throws -> DailyReadingPlan.Reading {
++        guard case .reading(let value) = plan.selection(on: date,
++                                                        timeZone: zone) else {
++            XCTFail("Expected a reading")
++            throw DailyReadingPlan.LoadError.invalidSchedule
++        }
++        return value
++    }
++
++    func testEveryDayHasFourReadingsAndYearRepeats() throws {
++        let plan = try DailyReadingPlan.load()
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = utc
++        let start = instant("2025-01-01T12:00:00Z")
++        var keys = Set<String>()
++        for index in 0..<365 {
++            let date = calendar.date(byAdding: .day, value: index, to: start)!
++            let value = try reading(plan, at: date, zone: utc)
++            XCTAssertEqual(value.day, index + 1)
++            XCTAssertTrue(keys.insert(value.date).inserted)
++            XCTAssertTrue([value.ot, value.nt, value.ps, value.prv]
++                .allSatisfy { !$0.isEmpty })
++        }
++        let first = try reading(plan, at: start, zone: utc)
++        XCTAssertEqual(first.ot, "Gn 1:1–3:24")
++        XCTAssertEqual(first, try reading(plan,
++            at: instant("2027-01-01T12:00:00Z"), zone: utc))
++        let last = try reading(plan,
++            at: instant("2025-12-31T12:00:00Z"), zone: utc)
++        XCTAssertEqual(last.ot, "4 Macc 16:1–18:24")
++        XCTAssertEqual(last.ps, "151:1–7")
++    }
++
++    func testLeapDayDoesNotShiftMarch() throws {
++        let plan = try DailyReadingPlan.load()
++        XCTAssertEqual(plan.selection(on: instant("2028-02-29T12:00:00Z"),
++                                      timeZone: utc), .catchUp)
++        XCTAssertEqual(try reading(plan,
++            at: instant("2028-02-28T12:00:00Z"), zone: utc).day, 59)
++        let march = try reading(plan,
++            at: instant("2028-03-01T12:00:00Z"), zone: utc)
++        XCTAssertEqual(march.day, 60)
++        XCTAssertEqual(march, try reading(plan,
++            at: instant("2027-03-01T12:00:00Z"), zone: utc))
++    }
++
++    func testLocalMidnightAndTimeZoneChange() throws {
++        let plan = try DailyReadingPlan.load()
++        let west = TimeZone(identifier: "America/Los_Angeles")!
++        let east = TimeZone(identifier: "Asia/Tokyo")!
++        let sameInstant = instant("2027-01-01T01:00:00Z")
++        XCTAssertEqual(try reading(plan, at: sameInstant, zone: west).date,
++                       "12-31")
++        XCTAssertEqual(try reading(plan, at: sameInstant, zone: east).date,
++                       "01-01")
++        XCTAssertEqual(try reading(plan,
++            at: instant("2027-01-01T07:59:59Z"), zone: west).date, "12-31")
++        XCTAssertEqual(try reading(plan,
++            at: instant("2027-01-01T08:00:00Z"), zone: west).date, "01-01")
++    }
++
++    func testDaylightSavingTransitionsKeepSameReading() throws {
++        let plan = try DailyReadingPlan.load()
++        let zone = TimeZone(identifier: "America/New_York")!
++        for pair in [
++            ("2026-03-08T06:59:59Z", "2026-03-08T07:00:00Z"),
++            ("2026-11-01T05:59:59Z", "2026-11-01T06:00:00Z")
++        ] {
++            XCTAssertEqual(try reading(plan, at: instant(pair.0), zone: zone),
++                           try reading(plan, at: instant(pair.1), zone: zone))
++        }
++    }
++
++    func testSpecialReadingsRetainInstructions() throws {
++        let plan = try DailyReadingPlan.load()
++        let sirach = try reading(plan,
++            at: instant("2026-10-17T12:00:00Z"), zone: utc)
++        XCTAssertTrue(sirach.ot.contains("Prologue"))
++        XCTAssertFalse(sirach.notes?.isEmpty ?? true)
++        let esther = try reading(plan,
++            at: instant("2026-10-09T12:00:00Z"), zone: utc)
++        XCTAssertEqual(esther.ot, "Gk Est 15:1–16; 5:3–7:10")
++    }
++
++    func testRejectsMissingDuplicateAndEmptyEntries() throws {
++        let url = try XCTUnwrap(Bundle.main.url(
++            forResource: "daily-reading-plan", withExtension: "json"))
++        let object = try XCTUnwrap(JSONSerialization.jsonObject(
++            with: Data(contentsOf: url)) as? [String: Any])
++        let days = try XCTUnwrap(object["days"] as? [[String: Any]])
++        var duplicate = days
++        duplicate[1] = days[0]
++        var blank = days
++        blank[0]["ot"] = "  "
++        for broken in [Array(days.dropLast()), duplicate, blank] {
++            let data = try JSONSerialization.data(withJSONObject: ["days": broken])
++            XCTAssertThrowsError(try DailyReadingPlan(data: data))
++        }
++    }
++}

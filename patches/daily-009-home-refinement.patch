@@ -1,0 +1,99 @@
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+index 0d434f6..cdffe1a 100644
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -20,22 +20,35 @@ struct HomeView: View {
+                     .padding(.bottom, blankLine)
+                 heading("daily mass")
+                     .padding(.bottom, blankLine)
+-                VStack(alignment: .leading, spacing: 0) {
+-                    Text("Roman")
+-                    Text("Byzantine")
+-                    Text("Antiochian")
+-                    Text("Alexandrian")
+-                    Text("Armenian")
++                Link(destination: URL(string: "https://masstimes.org")!) {
++                    HomeNavigationLabel(title: "Find a Mass near you")
+                 }
+-                .frame(maxWidth: .infinity, alignment: .leading)
++                .buttonStyle(.plain)
+                 .padding(.bottom, blankLine)
+             }
+             .font(AppFont.title)
+             .frame(maxWidth: .infinity, alignment: .leading)
+             .padding(32)
+         }
++        .frame(maxWidth: .infinity, maxHeight: .infinity)
++        .safeAreaInset(edge: .bottom, spacing: 0) {
++            Link(destination: URL(string:
++                "https://jjrgn.substack.com/subscribe")!) {
++                Text("Support this work")
++                    .font(AppFont.caption)
++                    .fixedSize(horizontal: false, vertical: true)
++                    .multilineTextAlignment(.center)
++                    .frame(minHeight: 44)
++                    .contentShape(Rectangle())
++            }
++            .buttonStyle(.plain)
++            .padding(.horizontal, 32)
++            .padding(.vertical, 8)
++            .frame(maxWidth: .infinity)
++            .background(.black)
++        }
+         .foregroundStyle(.white)
+-        .background(.black)
++        .background(Color.black.ignoresSafeArea())
+     }
+ 
+     private func heading(_ title: String) -> some View {
+@@ -45,3 +58,20 @@ struct HomeView: View {
+             .accessibilityAddTraits(.isHeader)
+     }
+ }
++
++struct HomeNavigationLabel: View {
++    let title: String
++
++    var body: some View {
++        HStack(spacing: 12) {
++            Text(title)
++                .fixedSize(horizontal: false, vertical: true)
++            Spacer(minLength: 0)
++            Image(systemName: "chevron.right")
++                .font(.body)
++                .accessibilityHidden(true)
++        }
++        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++        .contentShape(Rectangle())
++    }
++}
+diff --git a/Daily/Features/PrayerReader/MorningPrayerButton.swift b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+index 0c666e0..05d501b 100644
+--- a/Daily/Features/PrayerReader/MorningPrayerButton.swift
++++ b/Daily/Features/PrayerReader/MorningPrayerButton.swift
+@@ -6,6 +6,14 @@ struct MorningPrayerButton: View {
+ 
+ enum PrayerSessionKind: String {
+     case morning, rosary, evening
++
++    var title: String {
++        switch self {
++        case .morning: "Morning Session"
++        case .rosary: "Daily Rosary"
++        case .evening: "Evening Session"
++        }
++    }
+ }
+ 
+ struct SessionPrayerButton: View {
+@@ -14,9 +22,7 @@ struct SessionPrayerButton: View {
+ 
+     var body: some View {
+         Button { isPresented = true } label: {
+-            Text(kind.rawValue)
+-                .frame(maxWidth: .infinity, alignment: .leading)
+-                .contentShape(Rectangle())
++            HomeNavigationLabel(title: kind.title)
+         }
+             .buttonStyle(.plain)
+             .fullScreenCover(isPresented: $isPresented) {

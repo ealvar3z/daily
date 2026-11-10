@@ -1,0 +1,22 @@
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+index b1fc876..0d434f6 100644
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -18,6 +18,17 @@ struct HomeView: View {
+                     .padding(.bottom, blankLine)
+                 DailyReadingView()
+                     .padding(.bottom, blankLine)
++                heading("daily mass")
++                    .padding(.bottom, blankLine)
++                VStack(alignment: .leading, spacing: 0) {
++                    Text("Roman")
++                    Text("Byzantine")
++                    Text("Antiochian")
++                    Text("Alexandrian")
++                    Text("Armenian")
++                }
++                .frame(maxWidth: .infinity, alignment: .leading)
++                .padding(.bottom, blankLine)
+             }
+             .font(AppFont.title)
+             .frame(maxWidth: .infinity, alignment: .leading)

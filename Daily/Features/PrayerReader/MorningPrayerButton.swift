@@ -6,6 +6,14 @@ struct MorningPrayerButton: View {
 
 enum PrayerSessionKind: String {
     case morning, rosary, evening
+
+    var title: String {
+        switch self {
+        case .morning: "Morning Session"
+        case .rosary: "Daily Rosary"
+        case .evening: "Evening Session"
+        }
+    }
 }
 
 struct SessionPrayerButton: View {
@@ -14,9 +22,7 @@ struct SessionPrayerButton: View {
 
     var body: some View {
         Button { isPresented = true } label: {
-            Text(kind.rawValue)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            HomeNavigationLabel(title: kind.title)
         }
             .buttonStyle(.plain)
             .fullScreenCover(isPresented: $isPresented) {

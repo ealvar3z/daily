@@ -1,0 +1,66 @@
+diff --git a/Daily/Features/Home/DailyReadingView.swift b/Daily/Features/Home/DailyReadingView.swift
+index 7348032..ed327c1 100644
+--- a/Daily/Features/Home/DailyReadingView.swift
++++ b/Daily/Features/Home/DailyReadingView.swift
+@@ -3,22 +3,17 @@ import UIKit
+ 
+ struct DailyReadingView: View {
+     @Environment(\.scenePhase) private var scenePhase
+-    @ScaledMetric(relativeTo: .title2) private var sectionGap = 26
++    @ScaledMetric(relativeTo: .title2) private var labelWidth = 48
+     @State private var plan: DailyReadingPlan?
+     @State private var date = Date()
+     @State private var loadFailed = false
+ 
+     var body: some View {
+-        VStack(alignment: .leading, spacing: 24) {
+-            Text("daily reading")
+-                .font(AppFont.largeTitle)
+-                .frame(maxWidth: .infinity, alignment: .center)
+-                .accessibilityAddTraits(.isHeader)
++        VStack(alignment: .leading, spacing: 8) {
+             if let plan {
+                 switch plan.selection(on: date) {
+                 case .reading(let reading):
+-                    Grid(alignment: .leading, horizontalSpacing: 12,
+-                         verticalSpacing: 12) {
++                    VStack(alignment: .leading, spacing: 0) {
+                         row("OT", name: "Old Testament and Apocrypha",
+                             reference: reading.ot)
+                         row("NT", name: "New Testament", reference: reading.nt)
+@@ -47,7 +42,6 @@ struct DailyReadingView: View {
+         }
+         .font(AppFont.title)
+         .frame(maxWidth: .infinity, alignment: .leading)
+-        .padding(.top, sectionGap)
+         .task {
+             do {
+                 let loaded = try await Task.detached(priority: .userInitiated) {
+@@ -78,10 +72,10 @@ struct DailyReadingView: View {
+ 
+     private func row(_ label: String, name: String,
+                      reference: String) -> some View {
+-        GridRow(alignment: .firstTextBaseline) {
++        HStack(alignment: .firstTextBaseline, spacing: 12) {
+             Text("\(label):")
+                 .fixedSize()
+-                .gridColumnAlignment(.leading)
++                .frame(width: labelWidth, alignment: .leading)
+             Text(reference)
+                 .frame(maxWidth: .infinity, alignment: .leading)
+                 .fixedSize(horizontal: false, vertical: true)
+diff --git a/Daily/Features/Home/HomeView.swift b/Daily/Features/Home/HomeView.swift
+index 21d5926..ae6c250 100644
+--- a/Daily/Features/Home/HomeView.swift
++++ b/Daily/Features/Home/HomeView.swift
+@@ -11,6 +11,10 @@ struct HomeView: View {
+                 MorningPrayerButton()
+                 SessionPrayerButton(kind: .rosary)
+                 SessionPrayerButton(kind: .evening)
++                Text("daily reading")
++                    .font(AppFont.largeTitle)
++                    .frame(maxWidth: .infinity, alignment: .center)
++                    .accessibilityAddTraits(.isHeader)
+                 DailyReadingView()
+             }
+             .font(AppFont.title)
